@@ -1,0 +1,4 @@
+interface:
+  display_name: "Prism Memory Ops"
+  short_description: "Operate and recover the Prism memory pipeline"
+  default_prompt: "Use this skill to run, recover, and verify the Prism memory pipeline."
