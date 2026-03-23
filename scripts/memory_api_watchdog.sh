@@ -5,7 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
 : "${MEMORY_API_URL:?MEMORY_API_URL must be set (e.g. https://host/memory-api)}"
-: "${OPENCLAW_MEMORY_API_KEY:?OPENCLAW_MEMORY_API_KEY must be set for the server restart}"
+: "${PRISM_API_KEY:=${OPENCLAW_MEMORY_API_KEY:-}}"
+: "${PRISM_API_KEY:?PRISM_API_KEY must be set for the server restart}"
 
 LOG_DIR="${ROOT_DIR}/logs"
 mkdir -p "${LOG_DIR}"
@@ -33,14 +34,14 @@ if [[ ! -x "${PYTHON}" ]]; then
   PYTHON="python3"
 fi
 
-MEMORY_API_HOST="${OPENCLAW_MEMORY_API_HOST:-0.0.0.0}"
-MEMORY_API_PORT="${OPENCLAW_MEMORY_API_PORT:-8788}"
+MEMORY_API_HOST="${PRISM_API_HOST:-${OPENCLAW_MEMORY_API_HOST:-0.0.0.0}}"
+MEMORY_API_PORT="${PRISM_API_PORT:-${OPENCLAW_MEMORY_API_PORT:-8788}}"
 
 nohup env \
   MEMORY_API_URL="${MEMORY_API_URL}" \
-  OPENCLAW_MEMORY_API_KEY="${OPENCLAW_MEMORY_API_KEY}" \
-  OPENCLAW_MEMORY_API_PORT="${MEMORY_API_PORT}" \
-  OPENCLAW_MEMORY_API_STRIP_PREFIX="${OPENCLAW_MEMORY_API_STRIP_PREFIX:-/agents/${AGENT_ID:-xbp1hytd}}" \
+  PRISM_API_KEY="${PRISM_API_KEY}" \
+  PRISM_API_PORT="${MEMORY_API_PORT}" \
+  PRISM_API_STRIP_PREFIX="${PRISM_API_STRIP_PREFIX:-${OPENCLAW_MEMORY_API_STRIP_PREFIX:-/agents/${AGENT_ID:-xbp1hytd}}}" \
   "${PYTHON}" -m superprism_poc.raidguild.code.community_memory_api.server \
     --host "${MEMORY_API_HOST}" \
     --port "${MEMORY_API_PORT}" \

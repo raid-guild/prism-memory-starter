@@ -10,8 +10,8 @@ from urllib import error, request
 
 def _api_command() -> list[str]:
     port = os.environ.get("PORT", "8080")
-    base = os.environ.get("OPENCLAW_MEMORY_API_BASE", "superprism_poc")
-    space = os.environ.get("OPENCLAW_MEMORY_API_SPACE", "raidguild")
+    base = os.environ.get("PRISM_API_BASE_PATH", os.environ.get("OPENCLAW_MEMORY_API_BASE", "superprism_poc"))
+    space = os.environ.get("PRISM_API_SPACE", os.environ.get("OPENCLAW_MEMORY_API_SPACE", "raidguild"))
     command = [
         sys.executable,
         "-m",
@@ -36,14 +36,14 @@ def _run_api() -> int:
 
 def _run_trigger() -> int:
     api_base = os.environ.get("PRISM_API_BASE", "").rstrip("/")
-    api_key = os.environ.get("OPENCLAW_MEMORY_API_KEY", "")
+    api_key = os.environ.get("PRISM_API_OPS_KEY", os.environ.get("PRISM_API_KEY", os.environ.get("OPENCLAW_MEMORY_API_KEY", "")))
     trigger_path = os.environ.get("PRISM_TRIGGER_PATH", "").strip()
     if not api_base or not api_key or not trigger_path:
         print(
             json.dumps(
                 {
                     "ok": False,
-                    "error": "PRISM_API_BASE, OPENCLAW_MEMORY_API_KEY, and PRISM_TRIGGER_PATH are required",
+                    "error": "PRISM_API_BASE, PRISM_API_OPS_KEY, and PRISM_TRIGGER_PATH are required",
                 }
             ),
             file=sys.stderr,

@@ -97,7 +97,7 @@ Latest meetings collector (`latest_meetings`, optional):
 
 Other optional environment:
 
-- `OPENCLAW_MEMORY_API_KEY` for the API
+- `PRISM_API_KEY` for the API
 - `MEMORY_API_URL` if you use `scripts/memory_api_watchdog.sh`
 
 GitHub backup/push:

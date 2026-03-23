@@ -4,11 +4,22 @@ A lightweight FastAPI service exposes memory and knowledge artifacts from `super
 
 ## Paths & auth
 
-All data endpoints require an API key header:
+All protected endpoints require an API key header:
 
 ```
 X-Prism-Api-Key: <your-key>
 ```
+
+Scoped keys:
+
+- `PRISM_API_READ_KEY`
+  - authorizes read endpoints
+- `PRISM_API_WRITE_KEY`
+  - authorizes read endpoints plus `/memory/inbox` and `/knowledge/inbox`
+- `PRISM_API_OPS_KEY`
+  - authorizes read endpoints, write endpoints, and `/ops/*`
+- `PRISM_API_KEY`
+  - backward-compatible shared key that authorizes all scopes
 
 | Endpoint | Auth | Description |
 | --- | --- | --- |
@@ -23,7 +34,7 @@ X-Prism-Api-Key: <your-key>
 | `GET /skills/{skill}/download` | required | Download a bundled skill directory as `.tar.gz` |
 | `GET /products/suggestions/latest` | required | Latest daily product suggestion JSON |
 | `GET /products/suggestions/date/{yyyy-mm-dd}` | required | Daily product suggestion JSON for a date |
-| `GET /products/suggestions/weekly/{yyyy-ww}` | required | Weekly product suggestion JSON |
+| `GET /products/suggestions/weekly/{yyyy-WW}` | required | Weekly product suggestion JSON |
 | `GET /knowledge/docs/{slug}` | required | Fetch a knowledge doc (markdown + metadata) by slug or path |
 | `GET /knowledge/search?q=...&kind=...` | required | Simple manifest search with optional filters (kind, tag, entity, limit) |
 | `GET /knowledge/indexes/manifest` | required | Raw manifest index JSON |
@@ -39,16 +50,18 @@ X-Prism-Api-Key: <your-key>
 ## Running locally
 
 ```bash
-export OPENCLAW_MEMORY_API_KEY="replace-me"
-export OPENCLAW_MEMORY_API_STORAGE_BACKEND="filesystem"
-export OPENCLAW_MEMORY_API_DATA_ROOT="/data/prism/superprism_poc/raidguild"
+export PRISM_API_READ_KEY="replace-me-read"
+export PRISM_API_WRITE_KEY="replace-me-write"
+export PRISM_API_OPS_KEY="replace-me-ops"
+export PRISM_API_STORAGE_BACKEND="filesystem"
+export PRISM_API_DATA_ROOT="/data/prism/superprism_poc/raidguild"
 export PYTHONPATH=superprism_poc/raidguild/code
 python3 -m superprism_poc.raidguild.code.community_memory_api.server \
   --host 127.0.0.1 --port 8788 --base superprism_poc --space raidguild
 ```
 
 The API now resolves storage through a backend factory. `filesystem` is the default and matches the current repo layout; future backends can implement the same API contract without changing route handlers.
-When `OPENCLAW_MEMORY_API_DATA_ROOT` is set, the API reads and writes Prism data from that path instead of the bundled repo data. This is the preferred setup for Railway volumes.
+When `PRISM_API_DATA_ROOT` is set, the API reads and writes Prism data from that path instead of the bundled repo data. This is the preferred setup for Railway volumes.
 The `/ops/*` endpoints are intended for cron/scheduler triggers so one volume-owning API service can run the pipeline safely.
 
 ## Railway service modes
@@ -76,12 +89,12 @@ Recommended Railway layout:
 
 Both cron services also require:
 
-- `OPENCLAW_MEMORY_API_KEY`
+- `PRISM_API_OPS_KEY`
 
 ## Deploy config
 
 The checked-in [`superprism_poc/raidguild/config/space.json`](../superprism_poc/raidguild/config/space.json) is a generic starter config for local bootstrapping.
-For deployed environments, treat `OPENCLAW_MEMORY_API_DATA_ROOT/config/space.json` as the authoritative config:
+For deployed environments, treat `PRISM_API_DATA_ROOT/config/space.json` as the authoritative config:
 
 - the API now loads boot-time config and validation rules from the active data root
 - `/config/space` returns the mounted live config
@@ -146,6 +159,13 @@ Product suggestion example:
 ```bash
 curl -H "X-Prism-Api-Key: replace-me" \
   http://127.0.0.1:8788/products/suggestions/latest
+```
+
+Weekly product suggestion example:
+
+```bash
+curl -H "X-Prism-Api-Key: replace-me" \
+  http://127.0.0.1:8788/products/suggestions/weekly/2026-W10
 ```
 
 ### POST /knowledge/inbox

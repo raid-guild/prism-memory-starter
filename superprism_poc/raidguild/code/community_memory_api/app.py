@@ -32,6 +32,9 @@ class Settings:
     base: str = "superprism_poc"
     space: str = "raidguild"
     api_key: Optional[str] = None
+    read_api_key: Optional[str] = None
+    write_api_key: Optional[str] = None
+    ops_api_key: Optional[str] = None
     service_name: str = "prism-memory-api"
     storage_backend: str = "filesystem"
     data_root_override: Optional[Path] = None
@@ -113,7 +116,11 @@ def create_app(settings: Settings) -> FastAPI:
         "Starting Prism Memory API (service=%s, root=%s, auth=%s, root_path=%s)",
         settings.service_name,
         data_root,
-        "enabled" if settings.api_key else "disabled",
+        {
+            "read": "enabled" if (settings.read_api_key or settings.api_key) else "disabled",
+            "write": "enabled" if (settings.write_api_key or settings.api_key) else "disabled",
+            "ops": "enabled" if (settings.ops_api_key or settings.api_key) else "disabled",
+        },
         settings.root_path or "/",
     )
 
@@ -225,29 +232,78 @@ def create_app(settings: Settings) -> FastAPI:
         buffer.seek(0)
         return buffer.getvalue()
 
+    def _scoped_keys() -> dict[str, list[str]]:
+        keys: dict[str, list[str]] = {"read": [], "write": [], "ops": []}
+        if settings.read_api_key:
+            keys["read"].append(settings.read_api_key)
+        if settings.write_api_key:
+            keys["write"].append(settings.write_api_key)
+        if settings.ops_api_key:
+            keys["ops"].append(settings.ops_api_key)
+
+        # Backward-compatible fallback for older deploys that still provide one shared key.
+        if settings.api_key:
+            for scope in ("read", "write", "ops"):
+                keys[scope].append(settings.api_key)
+        return keys
+
+    scoped_keys = _scoped_keys()
+
     def require_api_key(
+        allowed_scopes: tuple[str, ...],
         prism_key: Optional[str] = Header(default=None, alias="X-Prism-Api-Key"),
         legacy_key: Optional[str] = Header(default=None, alias="X-API-Key"),
     ) -> None:
         api_key_value = prism_key or legacy_key
-        if not settings.api_key:
-            raise HTTPException(status_code=500, detail={"error": {"code": "api_key_not_configured", "message": "API key not configured"}})
+        if not any(scoped_keys[scope] for scope in allowed_scopes):
+            scope_names = ", ".join(allowed_scopes)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": "api_key_not_configured",
+                        "message": f"API key not configured for scope(s): {scope_names}",
+                    }
+                },
+            )
         if not api_key_value:
             raise HTTPException(
                 status_code=401,
                 headers={"WWW-Authenticate": "API-Key"},
                 detail={"error": {"code": "missing_api_key", "message": "X-Prism-Api-Key header required"}},
             )
-        if not secrets.compare_digest(api_key_value, settings.api_key):
-            logger.warning(
-                "Invalid API key attempt sha256=%s",
-                hashlib.sha256(api_key_value.encode()).hexdigest(),
-            )
-            raise HTTPException(
-                status_code=401,
-                headers={"WWW-Authenticate": "API-Key"},
-                detail={"error": {"code": "invalid_api_key", "message": "Invalid API key"}},
-            )
+        for scope in allowed_scopes:
+            for expected_key in scoped_keys[scope]:
+                if secrets.compare_digest(api_key_value, expected_key):
+                    return
+        logger.warning(
+            "Invalid API key attempt sha256=%s allowed_scopes=%s",
+            hashlib.sha256(api_key_value.encode()).hexdigest(),
+            ",".join(allowed_scopes),
+        )
+        raise HTTPException(
+            status_code=401,
+            headers={"WWW-Authenticate": "API-Key"},
+            detail={"error": {"code": "invalid_api_key", "message": "Invalid API key"}},
+        )
+
+    def require_read_api_key(
+        prism_key: Optional[str] = Header(default=None, alias="X-Prism-Api-Key"),
+        legacy_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+    ) -> None:
+        require_api_key(("read", "write", "ops"), prism_key, legacy_key)
+
+    def require_write_api_key(
+        prism_key: Optional[str] = Header(default=None, alias="X-Prism-Api-Key"),
+        legacy_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+    ) -> None:
+        require_api_key(("write", "ops"), prism_key, legacy_key)
+
+    def require_ops_api_key(
+        prism_key: Optional[str] = Header(default=None, alias="X-Prism-Api-Key"),
+        legacy_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+    ) -> None:
+        require_api_key(("ops",), prism_key, legacy_key)
 
     @app.middleware("http")
     async def access_log_middleware(request: Request, call_next: Callable):
@@ -285,24 +341,26 @@ def create_app(settings: Settings) -> FastAPI:
     async def health() -> schemas.HealthResponse:
         return schemas.HealthResponse(service=settings.service_name, space=settings.space)
 
-    auth_dependency = Depends(require_api_key)
+    read_auth_dependency = Depends(require_read_api_key)
+    write_auth_dependency = Depends(require_write_api_key)
+    ops_auth_dependency = Depends(require_ops_api_key)
 
-    @app.get("/memory/latest", dependencies=[auth_dependency], tags=["memory"])
+    @app.get("/memory/latest", dependencies=[read_auth_dependency], tags=["memory"])
     async def memory_latest():
         return storage.memory_latest()
 
-    @app.get("/latest", dependencies=[auth_dependency], tags=["memory"], include_in_schema=False)
+    @app.get("/latest", dependencies=[read_auth_dependency], tags=["memory"], include_in_schema=False)
     async def memory_latest_alias():
         return storage.memory_latest()
 
-    @app.get("/memory/date/{date}", dependencies=[auth_dependency], tags=["memory"])
+    @app.get("/memory/date/{date}", dependencies=[read_auth_dependency], tags=["memory"])
     async def memory_by_date(date: str):
         return storage.memory_by_date(date)
 
     @app.get(
         "/memory/participants",
         response_model=schemas.ParticipantActivityResponse,
-        dependencies=[auth_dependency],
+        dependencies=[read_auth_dependency],
         tags=["memory"],
     )
     async def participant_activity(
@@ -313,26 +371,26 @@ def create_app(settings: Settings) -> FastAPI:
     ):
         return storage.participant_activity(start=start, end=end, bucket=bucket, limit=limit)
 
-    @app.get("/date/{date}", dependencies=[auth_dependency], tags=["memory"], include_in_schema=False)
+    @app.get("/date/{date}", dependencies=[read_auth_dependency], tags=["memory"], include_in_schema=False)
     async def memory_by_date_alias(date: str):
         return storage.memory_by_date(date)
 
-    @app.get("/digests/date/{date}", dependencies=[auth_dependency], tags=["digests"])
+    @app.get("/digests/date/{date}", dependencies=[read_auth_dependency], tags=["digests"])
     async def digests_by_date(date: str):
         return storage.digests_by_date(date)
 
-    @app.get("/digests/bucket/{bucket}/date/{date}", dependencies=[auth_dependency], tags=["digests"])
+    @app.get("/digests/bucket/{bucket}/date/{date}", dependencies=[read_auth_dependency], tags=["digests"])
     async def digest_for_bucket(bucket: str, date: str):
         return storage.digest_for_bucket(bucket, date)
 
-    @app.get("/buckets/{bucket}/digests/{date}.{ext}", dependencies=[auth_dependency], tags=["digests"])
+    @app.get("/buckets/{bucket}/digests/{date}.{ext}", dependencies=[read_auth_dependency], tags=["digests"])
     async def bucket_digest_asset(bucket: str, date: str, ext: str):
         media_type, payload = storage.bucket_digest_asset(bucket, date, ext)
         if media_type == "text/markdown":
             return Response(content=payload, media_type=media_type)
         return payload
 
-    @app.get("/activity/recent", dependencies=[auth_dependency], tags=["activity"])
+    @app.get("/activity/recent", dependencies=[read_auth_dependency], tags=["activity"])
     async def activity_recent(
         limit: int = Query(100, ge=1, le=1000),
         event_type: Optional[str] = Query(None, alias="type"),
@@ -341,7 +399,7 @@ def create_app(settings: Settings) -> FastAPI:
     ):
         return storage.activity_recent(limit=limit, event_type=event_type, bucket=bucket, collector_key=collector_key)
 
-    @app.get("/config/space", dependencies=[auth_dependency], tags=["system"])
+    @app.get("/config/space", dependencies=[read_auth_dependency], tags=["system"])
     async def config_space():
         config_file = data_root / "config" / "space.json"
         if not config_file.is_file():
@@ -351,11 +409,11 @@ def create_app(settings: Settings) -> FastAPI:
             )
         return storage._load_json(config_file)
 
-    @app.get("/skills", dependencies=[auth_dependency], tags=["system"])
+    @app.get("/skills", dependencies=[read_auth_dependency], tags=["system"])
     async def skills_list():
         return {"skills": _list_skills()}
 
-    @app.get("/skills/{skill_name}/download", dependencies=[auth_dependency], tags=["system"])
+    @app.get("/skills/{skill_name}/download", dependencies=[read_auth_dependency], tags=["system"])
     async def skills_download(skill_name: str):
         skill_dir = _resolve_skill_dir(skill_name)
         payload = _tar_skill_dir(skill_dir)
@@ -366,23 +424,23 @@ def create_app(settings: Settings) -> FastAPI:
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
-    @app.get("/products/suggestions/latest", dependencies=[auth_dependency], tags=["products"])
+    @app.get("/products/suggestions/latest", dependencies=[read_auth_dependency], tags=["products"])
     async def product_suggestion_latest():
         return storage.product_suggestion_latest()
 
-    @app.get("/products/suggestions/date/{date}", dependencies=[auth_dependency], tags=["products"])
+    @app.get("/products/suggestions/date/{date}", dependencies=[read_auth_dependency], tags=["products"])
     async def product_suggestion_by_date(date: str):
         return storage.product_suggestion_by_date(date)
 
-    @app.get("/products/suggestions/weekly/{week}", dependencies=[auth_dependency], tags=["products"])
+    @app.get("/products/suggestions/weekly/{week}", dependencies=[read_auth_dependency], tags=["products"])
     async def product_suggestion_weekly(week: str):
         return storage.product_suggestion_weekly(week)
 
-    @app.get("/knowledge/docs/{slug:path}", dependencies=[auth_dependency], tags=["knowledge"])
+    @app.get("/knowledge/docs/{slug:path}", dependencies=[read_auth_dependency], tags=["knowledge"])
     async def knowledge_doc(slug: str):
         return storage.knowledge_doc(slug)
 
-    @app.get("/knowledge/search", dependencies=[auth_dependency], tags=["knowledge"])
+    @app.get("/knowledge/search", dependencies=[read_auth_dependency], tags=["knowledge"])
     async def knowledge_search(
         q: Optional[str] = Query(None, min_length=1),
         kind: Optional[str] = None,
@@ -392,22 +450,22 @@ def create_app(settings: Settings) -> FastAPI:
     ):
         return storage.knowledge_search(query=q, kind=kind, tag=tag, entity=entity, limit=limit)
 
-    @app.get("/knowledge/indexes/manifest", dependencies=[auth_dependency], tags=["knowledge"])
+    @app.get("/knowledge/indexes/manifest", dependencies=[read_auth_dependency], tags=["knowledge"])
     async def knowledge_index_manifest():
         return storage.knowledge_index("manifest")
 
-    @app.get("/knowledge/indexes/tags", dependencies=[auth_dependency], tags=["knowledge"])
+    @app.get("/knowledge/indexes/tags", dependencies=[read_auth_dependency], tags=["knowledge"])
     async def knowledge_index_tags():
         return storage.knowledge_index("tags")
 
-    @app.get("/knowledge/indexes/entities", dependencies=[auth_dependency], tags=["knowledge"])
+    @app.get("/knowledge/indexes/entities", dependencies=[read_auth_dependency], tags=["knowledge"])
     async def knowledge_index_entities():
         return storage.knowledge_index("entities")
 
     @app.post(
         "/knowledge/inbox",
         response_model=schemas.KnowledgeInboxResponse,
-        dependencies=[auth_dependency],
+        dependencies=[write_auth_dependency],
         tags=["knowledge"],
     )
     async def knowledge_inbox(payload: schemas.KnowledgeInboxRequest):
@@ -450,7 +508,7 @@ def create_app(settings: Settings) -> FastAPI:
     @app.post(
         "/memory/inbox",
         response_model=schemas.MemoryInboxResponse,
-        dependencies=[auth_dependency],
+        dependencies=[write_auth_dependency],
         tags=["memory"],
     )
     async def memory_inbox(entry: schemas.MemoryInboxRequest):
@@ -491,7 +549,7 @@ def create_app(settings: Settings) -> FastAPI:
     @app.post(
         "/ops/memory/run",
         response_model=schemas.OpsResponse,
-        dependencies=[auth_dependency],
+        dependencies=[ops_auth_dependency],
         tags=["ops"],
     )
     async def ops_memory_run(
@@ -543,7 +601,7 @@ def create_app(settings: Settings) -> FastAPI:
     @app.post(
         "/ops/memory/backfill",
         response_model=schemas.OpsBackfillResponse,
-        dependencies=[auth_dependency],
+        dependencies=[ops_auth_dependency],
         tags=["ops"],
     )
     async def ops_memory_backfill(
@@ -606,7 +664,7 @@ def create_app(settings: Settings) -> FastAPI:
     @app.post(
         "/ops/knowledge/promote",
         response_model=schemas.OpsResponse,
-        dependencies=[auth_dependency],
+        dependencies=[ops_auth_dependency],
         tags=["ops"],
     )
     async def ops_knowledge_promote():
@@ -626,7 +684,7 @@ def create_app(settings: Settings) -> FastAPI:
     @app.post(
         "/ops/knowledge/validate",
         response_model=schemas.OpsResponse,
-        dependencies=[auth_dependency],
+        dependencies=[ops_auth_dependency],
         tags=["ops"],
     )
     async def ops_knowledge_validate():
@@ -646,7 +704,7 @@ def create_app(settings: Settings) -> FastAPI:
     @app.post(
         "/ops/knowledge/index",
         response_model=schemas.OpsResponse,
-        dependencies=[auth_dependency],
+        dependencies=[ops_auth_dependency],
         tags=["ops"],
     )
     async def ops_knowledge_index():
@@ -666,7 +724,7 @@ def create_app(settings: Settings) -> FastAPI:
     @app.post(
         "/ops/knowledge/run",
         response_model=schemas.OpsResponse,
-        dependencies=[auth_dependency],
+        dependencies=[ops_auth_dependency],
         tags=["ops"],
     )
     async def ops_knowledge_run():

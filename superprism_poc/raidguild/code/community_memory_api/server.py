@@ -36,22 +36,25 @@ def infer_strip_prefix(explicit: str, agent_id: str | None) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prism Memory API server")
-    parser.add_argument("--host", default=os.getenv("OPENCLAW_MEMORY_API_HOST", "127.0.0.1"))
-    parser.add_argument("--port", type=int, default=int(os.getenv("OPENCLAW_MEMORY_API_PORT", "8788")))
-    parser.add_argument("--base", default=os.getenv("OPENCLAW_MEMORY_API_BASE", "superprism_poc"))
-    parser.add_argument("--space", default=os.getenv("OPENCLAW_MEMORY_API_SPACE", "raidguild"))
-    parser.add_argument("--api-key", default=os.getenv("OPENCLAW_MEMORY_API_KEY"))
+    parser.add_argument("--host", default=os.getenv("PRISM_API_HOST", os.getenv("OPENCLAW_MEMORY_API_HOST", "127.0.0.1")))
+    parser.add_argument("--port", type=int, default=int(os.getenv("PRISM_API_PORT", os.getenv("OPENCLAW_MEMORY_API_PORT", "8788"))))
+    parser.add_argument("--base", default=os.getenv("PRISM_API_BASE_PATH", os.getenv("OPENCLAW_MEMORY_API_BASE", "superprism_poc")))
+    parser.add_argument("--space", default=os.getenv("PRISM_API_SPACE", os.getenv("OPENCLAW_MEMORY_API_SPACE", "raidguild")))
+    parser.add_argument("--api-key", default=os.getenv("PRISM_API_KEY", os.getenv("OPENCLAW_MEMORY_API_KEY")))
+    parser.add_argument("--read-api-key", default=os.getenv("PRISM_API_READ_KEY", os.getenv("OPENCLAW_MEMORY_API_READ_KEY")))
+    parser.add_argument("--write-api-key", default=os.getenv("PRISM_API_WRITE_KEY", os.getenv("OPENCLAW_MEMORY_API_WRITE_KEY")))
+    parser.add_argument("--ops-api-key", default=os.getenv("PRISM_API_OPS_KEY", os.getenv("OPENCLAW_MEMORY_API_OPS_KEY")))
     parser.add_argument(
         "--storage-backend",
-        default=os.getenv("OPENCLAW_MEMORY_API_STORAGE_BACKEND", "filesystem"),
+        default=os.getenv("PRISM_API_STORAGE_BACKEND", os.getenv("OPENCLAW_MEMORY_API_STORAGE_BACKEND", "filesystem")),
         help="Storage backend for API reads/writes (default: filesystem)",
     )
     parser.add_argument(
         "--data-root",
-        default=os.getenv("OPENCLAW_MEMORY_API_DATA_ROOT", ""),
+        default=os.getenv("PRISM_API_DATA_ROOT", os.getenv("OPENCLAW_MEMORY_API_DATA_ROOT", "")),
         help="Optional override for the Prism data root (for example a mounted volume path)",
     )
-    parser.add_argument("--root-path", default=os.getenv("OPENCLAW_MEMORY_API_ROOT_PATH", ""))
+    parser.add_argument("--root-path", default=os.getenv("PRISM_API_ROOT_PATH", os.getenv("OPENCLAW_MEMORY_API_ROOT_PATH", "")))
     parser.add_argument(
         "--memory-api-url",
         default=os.getenv("MEMORY_API_URL"),
@@ -59,17 +62,20 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--strip-prefix",
-        default=os.getenv("OPENCLAW_MEMORY_API_STRIP_PREFIX", ""),
+        default=os.getenv("PRISM_API_STRIP_PREFIX", os.getenv("OPENCLAW_MEMORY_API_STRIP_PREFIX", "")),
         help="Optional path prefix (e.g. /agents/xbp1hytd) to strip before FastAPI routing",
     )
-    parser.add_argument("--log-level", default=os.getenv("OPENCLAW_MEMORY_API_LOG_LEVEL", "info"))
+    parser.add_argument("--log-level", default=os.getenv("PRISM_API_LOG_LEVEL", os.getenv("OPENCLAW_MEMORY_API_LOG_LEVEL", "info")))
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    if not args.api_key:
-        raise SystemExit("OPENCLAW_MEMORY_API_KEY (or --api-key) must be set")
+    if not any([args.api_key, args.read_api_key, args.write_api_key, args.ops_api_key]):
+        raise SystemExit(
+            "Set PRISM_API_KEY or at least one scoped key: "
+            "PRISM_API_READ_KEY, PRISM_API_WRITE_KEY, PRISM_API_OPS_KEY"
+        )
 
     root_path = infer_root_path(args.root_path, args.memory_api_url)
     strip_prefix = infer_strip_prefix(args.strip_prefix, os.getenv("AGENT_ID"))
@@ -80,6 +86,9 @@ def main() -> None:
         base=args.base,
         space=args.space,
         api_key=args.api_key,
+        read_api_key=args.read_api_key,
+        write_api_key=args.write_api_key,
+        ops_api_key=args.ops_api_key,
         storage_backend=args.storage_backend,
         data_root_override=Path(args.data_root) if args.data_root else None,
         root_path=root_path,

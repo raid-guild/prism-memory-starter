@@ -1,21 +1,21 @@
 ---
 name: prism-api-reader
-description: Read from the Prism Memory API using a read-only API key. Use when an agent needs rolling memory, digests, participant activity, knowledge search, knowledge docs, or product suggestion outputs without writing to inboxes or triggering ops endpoints.
+description: Read from the Prism Memory API using a read-scoped API key. Use when an agent needs rolling memory, digests, participant activity, knowledge search, knowledge docs, or product suggestion outputs without writing to inboxes or triggering ops endpoints.
 ---
 
 # Prism API Reader
 
-Use this skill for read-only retrieval against a deployed Prism API.
+Use this skill for read-scoped retrieval against a deployed Prism API.
 
 ## Required auth
 
 Send:
 
 ```text
-X-Prism-Api-Key: <read-only-key>
+X-Prism-Api-Key: <read-key>
 ```
 
-Do not use write or ops endpoints with a read-only key.
+Use a read-scoped key only. Do not use write or ops endpoints with it.
 
 ## Base workflow
 
@@ -45,7 +45,7 @@ Do not use write or ops endpoints with a read-only key.
 - Product suggestions:
   `GET /products/suggestions/latest`
   `GET /products/suggestions/date/{yyyy-mm-dd}`
-  `GET /products/suggestions/weekly/{yyyy-ww}`
+  `GET /products/suggestions/weekly/{yyyy-WW}`
 
 ## Retrieval rules
 
