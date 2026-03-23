@@ -24,8 +24,13 @@
   ],
   "discord": {
     "category_to_bucket": {
-      "replace-category-id-1": "general",
-      "replace-category-id-2": "knowledge"
+      "684227450955235329": "townsquare",
+      "685273857338376246": "guildhq",
+      "1470894727342723082": "governance",
+      "1009434800676946022": "cohort",
+      "1470888731241087128": "agency",
+      "1470885162848882809": "infrastructure",
+      "1470884971060400169": "brand"
     },
     "bucket_defaults": {
       "mode": "high_signal"

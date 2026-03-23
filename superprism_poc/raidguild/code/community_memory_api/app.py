@@ -534,6 +534,26 @@ def create_app(settings: Settings) -> FastAPI:
         )
 
     @app.post(
+        "/ops/knowledge/promote",
+        response_model=schemas.OpsResponse,
+        dependencies=[auth_dependency],
+        tags=["ops"],
+    )
+    async def ops_knowledge_promote():
+        return _run_ops_command(
+            "knowledge.promote",
+            [
+                "-m",
+                "community_knowledge",
+                "promote",
+                "--base",
+                ops_base_arg,
+                "--space",
+                settings.space,
+            ],
+        )
+
+    @app.post(
         "/ops/knowledge/validate",
         response_model=schemas.OpsResponse,
         dependencies=[auth_dependency],
@@ -580,6 +600,18 @@ def create_app(settings: Settings) -> FastAPI:
         tags=["ops"],
     )
     async def ops_knowledge_run():
+        _run_ops_command(
+            "knowledge.promote",
+            [
+                "-m",
+                "community_knowledge",
+                "promote",
+                "--base",
+                ops_base_arg,
+                "--space",
+                settings.space,
+            ],
+        )
         _run_ops_command(
             "knowledge.validate",
             [
