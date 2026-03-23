@@ -301,6 +301,7 @@ class DiscordLatestCollector:
                 "channel_name": channel.get("channel_name"),
                 "channel_topic": channel.get("channel_topic"),
             }
+            channel_stub.update(self._thread_context(channel))
             for message in channel.get("messages", []):
                 created_at = message.get("created_at")
                 if not created_at:
@@ -331,6 +332,7 @@ class DiscordLatestCollector:
                         "category_id": data["channel"].get("category_id"),
                         "channel_name": data["channel"].get("channel_name"),
                         "channel_topic": data["channel"].get("channel_topic"),
+                        **self._thread_context(data["channel"]),
                         "messages": data["messages"],
                     }
                     for data in channel_entries.values()
@@ -363,6 +365,32 @@ class DiscordLatestCollector:
             bucket["messages"] += len(messages)
             bucket["channels"].append({"channel": channel, "messages": messages})
         return buckets
+
+    @staticmethod
+    def _thread_context(raw: Dict[str, Any]) -> Dict[str, Any]:
+        context: Dict[str, Any] = {}
+        for key in (
+            "thread_id",
+            "thread_name",
+            "parent_channel_id",
+            "parent_channel_name",
+            "is_thread",
+        ):
+            if key in raw and raw.get(key) not in (None, ""):
+                context[key] = raw.get(key)
+
+        thread = raw.get("thread")
+        if isinstance(thread, dict):
+            for source_key, target_key in (
+                ("id", "thread_id"),
+                ("name", "thread_name"),
+                ("parent_channel_id", "parent_channel_id"),
+                ("parent_channel_name", "parent_channel_name"),
+            ):
+                if target_key not in context and thread.get(source_key) not in (None, ""):
+                    context[target_key] = thread.get(source_key)
+            context["is_thread"] = True
+        return context
 
     def _write_bucket_transcripts(
         self,
@@ -405,6 +433,7 @@ class DiscordLatestCollector:
                         "category_id": channel.get("category_id"),
                         "channel_name": channel.get("channel_name"),
                         "channel_topic": channel.get("channel_topic"),
+                        **self._thread_context(channel),
                         "messages": messages,
                     }
                 )
@@ -413,6 +442,14 @@ class DiscordLatestCollector:
                 )
                 topic = channel.get("channel_topic") or ""
                 lines.append(f"topic: {topic}")
+                if channel.get("thread_id"):
+                    lines.append(f"thread_id: {channel.get('thread_id')}")
+                if channel.get("thread_name"):
+                    lines.append(f"thread_name: {channel.get('thread_name')}")
+                if channel.get("parent_channel_id"):
+                    lines.append(f"parent_channel_id: {channel.get('parent_channel_id')}")
+                if channel.get("parent_channel_name"):
+                    lines.append(f"parent_channel_name: {channel.get('parent_channel_name')}")
                 for message in messages:
                     author = message.get("author", {}).get("display_name") or message.get(
                         "author", {}

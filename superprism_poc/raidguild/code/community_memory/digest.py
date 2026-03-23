@@ -80,12 +80,47 @@ def _load_raw_records(raw_dir: Path) -> List[Dict[str, Any]]:
                 content = _clean(message.get("content", ""))
                 if not content:
                     continue
+                thread = message.get("thread") or {}
+                thread_id = (
+                    message.get("thread_id")
+                    or thread.get("id")
+                    or channel.get("thread_id")
+                )
+                thread_name = (
+                    message.get("thread_name")
+                    or thread.get("name")
+                    or channel.get("thread_name")
+                )
+                parent_channel_id = (
+                    message.get("parent_channel_id")
+                    or thread.get("parent_channel_id")
+                    or channel.get("parent_channel_id")
+                )
+                parent_channel_name = (
+                    message.get("parent_channel_name")
+                    or thread.get("parent_channel_name")
+                    or channel.get("parent_channel_name")
+                )
+                is_thread = bool(
+                    message.get("is_thread")
+                    or channel.get("is_thread")
+                    or thread_id
+                )
                 records.append(
                     {
                         "bucket": bucket,
                         "channel": channel_name,
                         "channel_id": channel_id,
                         "channel_topic": channel_topic,
+                        "thread_id": str(thread_id) if thread_id not in (None, "") else None,
+                        "thread_name": str(thread_name) if thread_name not in (None, "") else None,
+                        "parent_channel_id": str(parent_channel_id)
+                        if parent_channel_id not in (None, "")
+                        else None,
+                        "parent_channel_name": str(parent_channel_name)
+                        if parent_channel_name not in (None, "")
+                        else None,
+                        "is_thread": is_thread,
                         "author": author.get("display_name")
                         or author.get("username", "unknown"),
                         "content": content,
@@ -114,6 +149,8 @@ def _message_tags(record: Dict[str, Any]) -> List[str]:
         tags.append("question")
     if record.get("attachments"):
         tags.append("attachment")
+    if record.get("thread_id"):
+        tags.append("thread")
     return sorted(set(tags))
 
 
@@ -155,8 +192,11 @@ def _overview_summary(records: List[Dict[str, Any]]) -> List[str]:
 def _to_structured_entry(
     record: Dict[str, Any], *, reason: str, include_quote: bool = True
 ) -> Dict[str, Any]:
+    location = record.get("channel") or "unknown"
+    if record.get("thread_name"):
+        location = f"{location} / {record['thread_name']}"
     summary = (
-        f"{record.get('channel')}: {record.get('author')} — "
+        f"{location}: {record.get('author')} — "
         f"{_shorten(record.get('content', ''), 180)}"
     )
     quote = {
@@ -170,6 +210,11 @@ def _to_structured_entry(
         "bucket": record.get("bucket"),
         "channel": record.get("channel"),
         "channel_id": record.get("channel_id"),
+        "thread_id": record.get("thread_id"),
+        "thread_name": record.get("thread_name"),
+        "parent_channel_id": record.get("parent_channel_id"),
+        "parent_channel_name": record.get("parent_channel_name"),
+        "is_thread": bool(record.get("is_thread")),
         "author": record.get("author"),
         "created_at": record.get("created_at"),
         "jump_url": record.get("jump_url"),
@@ -192,13 +237,63 @@ def _render_legacy_line(entry: Dict[str, Any]) -> str:
 def _dedupe_structured(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     seen: Dict[str, Dict[str, Any]] = {}
     for item in items:
-        key = f"{item.get('channel')}|{item.get('author')}|{item.get('summary')}"
+        key = (
+            f"{item.get('channel')}|{item.get('thread_id') or ''}|"
+            f"{item.get('author')}|{item.get('summary')}"
+        )
         if key in seen:
             if item.get("score", 0) > seen[key].get("score", 0):
                 seen[key] = item
         else:
             seen[key] = item
     return list(seen.values())
+
+
+def _thread_summary_entry(
+    thread_id: str,
+    records: List[Dict[str, Any]],
+    *,
+    promoted: bool,
+) -> Dict[str, Any]:
+    ordered = sorted(records, key=lambda item: item.get("created_at", ""))
+    first = ordered[0]
+    participants = sorted(
+        {str(record.get("author", "")).strip() for record in ordered if str(record.get("author", "")).strip()}
+    )
+    summary = (
+        f"{first.get('channel')} / {first.get('thread_name') or thread_id}: "
+        f"{len(ordered)} messages from {len(participants)} participant(s)"
+    )
+    if participants:
+        summary += f" ({', '.join(participants[:4])}"
+        if len(participants) > 4:
+            summary += ", ..."
+        summary += ")"
+    return {
+        "summary": summary,
+        "bucket": first.get("bucket"),
+        "channel": first.get("channel"),
+        "channel_id": first.get("channel_id"),
+        "thread_id": thread_id,
+        "thread_name": first.get("thread_name"),
+        "parent_channel_id": first.get("parent_channel_id"),
+        "parent_channel_name": first.get("parent_channel_name"),
+        "author": first.get("author"),
+        "created_at": first.get("created_at"),
+        "jump_url": first.get("jump_url"),
+        "score": max(3, len(ordered)),
+        "tags": ["thread", "promoted" if promoted else "active_thread"],
+        "reason": "thread_promotion" if promoted else "thread_activity",
+        "evidence_quotes": [
+            {
+                "author": record.get("author", ""),
+                "timestamp": record.get("created_at", ""),
+                "text": _shorten(record.get("content", ""), 240),
+                "jump_url": record.get("jump_url", ""),
+            }
+            for record in ordered[:2]
+        ],
+    }
 
 
 @dataclass
@@ -299,6 +394,36 @@ class DigestGenerator:
             if mode != "noisy_highlights" and score <= 1:
                 continue
             highlights_structured.append(_to_structured_entry(record, reason="highlight"))
+
+        promotion_conf = self.config.discord.thread_promotion
+        if promotion_conf.enabled:
+            explicit_thread_ids = set(promotion_conf.thread_ids)
+            thread_groups: Dict[str, List[Dict[str, Any]]] = {}
+            for record in records:
+                thread_id = record.get("thread_id")
+                if thread_id:
+                    thread_groups.setdefault(thread_id, []).append(record)
+
+            for thread_id, thread_records in thread_groups.items():
+                participants = {
+                    str(item.get("author", "")).strip()
+                    for item in thread_records
+                    if str(item.get("author", "")).strip()
+                }
+                promoted = thread_id in explicit_thread_ids
+                active_enough = (
+                    len(thread_records) >= promotion_conf.min_messages
+                    and len(participants) >= promotion_conf.min_participants
+                )
+                if not promoted and not active_enough:
+                    continue
+                highlights_structured.append(
+                    _thread_summary_entry(
+                        thread_id,
+                        thread_records,
+                        promoted=promoted,
+                    )
+                )
 
         highlights_structured = _dedupe_structured(highlights_structured)
         decisions_structured = _dedupe_structured(decisions_structured)

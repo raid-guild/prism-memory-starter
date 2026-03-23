@@ -55,10 +55,19 @@ class CollectorConfig:
 
 
 @dataclass
+class ThreadPromotionConfig:
+    enabled: bool
+    thread_ids: List[str]
+    min_messages: int
+    min_participants: int
+
+
+@dataclass
 class DiscordConfig:
     category_to_bucket: Dict[str, str]
     bucket_defaults: Dict[str, str]
     bucket_overrides: Dict[str, Dict[str, str]]
+    thread_promotion: ThreadPromotionConfig
 
 
 @dataclass
@@ -116,10 +125,21 @@ def load_config(path: Path) -> SpaceConfig:
 
     collectors = [CollectorConfig.from_dict(c) for c in raw.get("collectors", [])]
     discord_conf = raw.get("discord", {})
+    thread_promotion_conf = discord_conf.get("thread_promotion", {})
     discord = DiscordConfig(
         category_to_bucket=discord_conf.get("category_to_bucket", {}),
         bucket_defaults=discord_conf.get("bucket_defaults", {}),
         bucket_overrides=discord_conf.get("bucket_overrides", {}),
+        thread_promotion=ThreadPromotionConfig(
+            enabled=bool(thread_promotion_conf.get("enabled", True)),
+            thread_ids=[
+                str(item).strip()
+                for item in thread_promotion_conf.get("thread_ids", [])
+                if str(item).strip()
+            ],
+            min_messages=int(thread_promotion_conf.get("min_messages", 6)),
+            min_participants=int(thread_promotion_conf.get("min_participants", 2)),
+        ),
     )
     meetings = raw.get("meetings", {})
     inbox = raw.get("inbox", {})

@@ -1,5 +1,5 @@
 {
-  "_comment": "Starter config only. Deployed environments should use the volume-backed data root config at OPENCLAW_MEMORY_API_DATA_ROOT/config/space.json.",
+  "_comment": "Starter config only. Deployed environments should use the volume-backed data root config at PRISM_API_DATA_ROOT/config/space.json.",
   "space_slug": "raidguild",
   "timezone": "America/Denver",
   "collectors": [
@@ -35,7 +35,16 @@
     "bucket_defaults": {
       "mode": "high_signal"
     },
-    "bucket_overrides": {}
+    "bucket_overrides": {},
+    "thread_promotion": {
+      "enabled": true,
+      "thread_ids": [
+        "1420787621705027664",
+        "1483470584146038948"
+      ],
+      "min_messages": 6,
+      "min_participants": 2
+    }
   },
   "meetings": {
     "bucket": "meetings"

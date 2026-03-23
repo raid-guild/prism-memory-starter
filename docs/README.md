@@ -102,6 +102,8 @@ For deployed environments, treat `PRISM_API_DATA_ROOT/config/space.json` as the 
 
 This keeps the repo portable while allowing each deploy to carry its own Discord category mappings, collector toggles, and knowledge constraints.
 
+If important Discord threads are being missed by high-signal digesting, add them to `discord.thread_promotion.thread_ids` in the active `space.json`. The digest will also auto-promote thread activity when it crosses the configured `min_messages` and `min_participants` thresholds.
+
 Example request:
 
 ```bash
