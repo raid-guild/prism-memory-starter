@@ -48,6 +48,17 @@ The API now resolves storage through a backend factory. `filesystem` is the defa
 When `OPENCLAW_MEMORY_API_DATA_ROOT` is set, the API reads and writes Prism data from that path instead of the bundled repo data. This is the preferred setup for Railway volumes.
 The `/ops/*` endpoints are intended for cron/scheduler triggers so one volume-owning API service can run the pipeline safely.
 
+## Deploy config
+
+The checked-in [`superprism_poc/raidguild/config/space.json`](../superprism_poc/raidguild/config/space.json) is a generic starter config for local bootstrapping.
+For deployed environments, treat `OPENCLAW_MEMORY_API_DATA_ROOT/config/space.json` as the authoritative config:
+
+- the API now loads boot-time config and validation rules from the active data root
+- `/config/space` returns the mounted live config
+- Railway volume-backed deploys should update the mounted `space.json`, not the starter file in the image
+
+This keeps the repo portable while allowing each deploy to carry its own Discord category mappings, collector toggles, and knowledge constraints.
+
 Example request:
 
 ```bash

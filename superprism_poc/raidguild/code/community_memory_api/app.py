@@ -64,7 +64,7 @@ def create_app(settings: Settings) -> FastAPI:
     except ModuleNotFoundError as exc:
         raise RuntimeError("community_memory or community_knowledge package not found") from exc
 
-    config_path = settings.base_dir / settings.base / settings.space / "config" / "space.json"
+    config_path = data_root / "config" / "space.json"
     knowledge_constraints = None
     allowed_kinds: list[str] = []
     try:
@@ -285,6 +285,16 @@ def create_app(settings: Settings) -> FastAPI:
         collector_key: Optional[str] = None,
     ):
         return storage.activity_recent(limit=limit, event_type=event_type, bucket=bucket, collector_key=collector_key)
+
+    @app.get("/config/space", dependencies=[auth_dependency], tags=["system"])
+    async def config_space():
+        config_file = data_root / "config" / "space.json"
+        if not config_file.is_file():
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": "not_found", "message": f"Config not found: {config_file}"}},
+            )
+        return storage._load_json(config_file)
 
     @app.get("/products/suggestions/latest", dependencies=[auth_dependency], tags=["products"])
     async def product_suggestion_latest():

@@ -1,4 +1,5 @@
 {
+  "_comment": "Starter config only. Deployed environments should use the volume-backed data root config at OPENCLAW_MEMORY_API_DATA_ROOT/config/space.json.",
   "space_slug": "raidguild",
   "timezone": "America/Denver",
   "collectors": [
