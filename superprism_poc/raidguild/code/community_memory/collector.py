@@ -627,6 +627,20 @@ class LatestMeetingsCollector:
                 or to_iso(fallback_time)
             )
             jump_url = item.get("jump_url") or item.get("url") or ""
+            participants = self._coerce_participants(item.get("participants"))
+            metadata: Dict[str, Any] = {}
+            if participants:
+                metadata["participants"] = participants
+            participant_count = item.get("participant_count")
+            if participant_count is None:
+                participant_count = item.get("attendee_count")
+            if participant_count is None and participants:
+                participant_count = len(participants)
+            if participant_count is not None:
+                try:
+                    metadata["participant_count"] = int(participant_count)
+                except (TypeError, ValueError):
+                    pass
             messages.append(
                 {
                     "id": str(file_id),
@@ -640,9 +654,24 @@ class LatestMeetingsCollector:
                     "jump_url": jump_url,
                     "attachments": [],
                     "embeds": [],
+                    "metadata": metadata,
                 }
             )
         return messages
+
+    @staticmethod
+    def _coerce_participants(value: Any) -> List[str]:
+        if not isinstance(value, list):
+            return []
+        participants: List[str] = []
+        seen: set[str] = set()
+        for raw in value:
+            name = str(raw).strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            participants.append(name)
+        return participants
 
     def _write_transcript(
         self,
@@ -867,6 +896,16 @@ class InboxMemoryCollector:
         source = str(payload.get("source"))
         msg_type = str(payload.get("type"))
         jump_url = str(payload.get("url") or "")
+        participants = self._coerce_participants(payload.get("participants"))
+        participant_count = payload.get("participant_count")
+        if participant_count is None and participants:
+            participant_count = len(participants)
+        normalized_count = None
+        if participant_count is not None:
+            try:
+                normalized_count = int(participant_count)
+            except (TypeError, ValueError):
+                raise ValueError("participant_count must be an integer")
         return {
             "bucket": bucket,
             "author": author,
@@ -876,6 +915,8 @@ class InboxMemoryCollector:
             "type": msg_type,
             "jump_url": jump_url,
             "source_file": source_path.name,
+            "participants": participants,
+            "participant_count": normalized_count,
         }
 
     def _safe_slug(self, value: str) -> str:
@@ -929,6 +970,14 @@ class InboxMemoryCollector:
             "jump_url": record["jump_url"],
             "attachments": [],
             "embeds": [],
+            "metadata": {
+                key: value
+                for key, value in {
+                    "participants": record.get("participants", []),
+                    "participant_count": record.get("participant_count"),
+                }.items()
+                if value not in (None, [])
+            },
         }
         window_key = f"{to_iso(since).replace(':', '')}_{to_iso(until).replace(':', '')}"
 

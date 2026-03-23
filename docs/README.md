@@ -15,6 +15,7 @@ X-Prism-Api-Key: <your-key>
 | `GET /health` | none | Service heartbeat |
 | `GET /memory/latest` | required | Latest rolling memory JSON |
 | `GET /memory/date/{yyyy-mm-dd}` | required | Rolling memory snapshot for a date |
+| `GET /memory/participants?start=...&end=...` | required | Aggregate active participants across raw bucket windows, optionally filtered by bucket |
 | `GET /digests/date/{yyyy-mm-dd}` | required | Aggregated digests across buckets |
 | `GET /digests/bucket/{bucket}/date/{yyyy-mm-dd}` | required | Single bucket digest |
 | `GET /activity/recent?limit=100&type=...` | required | Activity log tail with optional filters |
@@ -28,20 +29,60 @@ X-Prism-Api-Key: <your-key>
 | `GET /knowledge/indexes/entities` | required | Entity → docs lookup table |
 | `POST /knowledge/inbox` | required | Drop a markdown + metadata pair into `knowledge/kb/triage/inbox/` |
 | `POST /memory/inbox` | required | Drop a JSON payload into `inbox/memory/incoming/` for the inbox collector |
+| `POST /ops/memory/run` | required | Run `collect -> digest -> memory -> seeds` against the active Prism data root |
+| `POST /ops/memory/backfill` | required | Run a full multi-day `collect -> digest -> memory -> seeds` recompute across a lookback window |
+| `POST /ops/knowledge/run` | required | Run `validate -> index` against the active Prism data root |
 
 ## Running locally
 
 ```bash
 export OPENCLAW_MEMORY_API_KEY="replace-me"
+export OPENCLAW_MEMORY_API_STORAGE_BACKEND="filesystem"
+export OPENCLAW_MEMORY_API_DATA_ROOT="/data/prism/superprism_poc/raidguild"
 export PYTHONPATH=superprism_poc/raidguild/code
 python3 -m superprism_poc.raidguild.code.community_memory_api.server \
   --host 127.0.0.1 --port 8788 --base superprism_poc --space raidguild
 ```
 
+The API now resolves storage through a backend factory. `filesystem` is the default and matches the current repo layout; future backends can implement the same API contract without changing route handlers.
+When `OPENCLAW_MEMORY_API_DATA_ROOT` is set, the API reads and writes Prism data from that path instead of the bundled repo data. This is the preferred setup for Railway volumes.
+The `/ops/*` endpoints are intended for cron/scheduler triggers so one volume-owning API service can run the pipeline safely.
+
 Example request:
 
 ```bash
 curl -H "X-Prism-Api-Key: replace-me" http://127.0.0.1:8788/memory/latest
+```
+
+Participant activity example:
+
+```bash
+curl -H "X-Prism-Api-Key: replace-me" \
+  "http://127.0.0.1:8788/memory/participants?start=2026-03-08T00:00:00Z&end=2026-03-09T00:00:00Z&bucket=knowledge&limit=20"
+```
+
+Memory ops example:
+
+```bash
+curl -X POST \
+  -H "X-Prism-Api-Key: replace-me" \
+  "http://127.0.0.1:8788/ops/memory/run?backfill_hours=24"
+```
+
+Memory backfill example:
+
+```bash
+curl -X POST \
+  -H "X-Prism-Api-Key: replace-me" \
+  "http://127.0.0.1:8788/ops/memory/backfill?days=30"
+```
+
+Knowledge ops example:
+
+```bash
+curl -X POST \
+  -H "X-Prism-Api-Key: replace-me" \
+  "http://127.0.0.1:8788/ops/knowledge/run"
 ```
 
 Product suggestion example:
@@ -93,6 +134,8 @@ curl -X POST \
     "content": "Key decisions from the ops huddle...",
     "bucket": "knowledge",
     "author": "ops-lead",
-    "url": "https://example.com/ops-notes"
+    "url": "https://example.com/ops-notes",
+    "participants": ["ops-lead", "alice", "bob"],
+    "participant_count": 3
   }'
 ```

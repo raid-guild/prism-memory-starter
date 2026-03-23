@@ -1,20 +1,25 @@
 from __future__ import annotations
 
+import subprocess
 import hashlib
 import logging
+import os
 import secrets
 import sys
 import time
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
 from typing import Callable, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 
+from .backends import StorageBackend, create_storage_backend
 from . import schemas
-from .storage import Storage, StorageError
+from .storage import StorageError
 
 logger = logging.getLogger(__name__)
 
@@ -26,18 +31,29 @@ class Settings:
     space: str = "raidguild"
     api_key: Optional[str] = None
     service_name: str = "prism-memory-api"
+    storage_backend: str = "filesystem"
+    data_root_override: Optional[Path] = None
     root_path: str = ""
     strip_prefix: str = ""
 
     @property
     def data_root(self) -> Path:
+        if self.data_root_override is not None:
+            return self.data_root_override
         return self.base_dir / self.base / self.space
 
 
 def create_app(settings: Settings) -> FastAPI:
     data_root = settings.data_root
+    if settings.data_root_override is not None and not data_root.exists():
+        bundled_root = settings.base_dir / settings.base / settings.space
+        if bundled_root.exists():
+            shutil.copytree(bundled_root, data_root)
     data_root.mkdir(parents=True, exist_ok=True)
-    storage = Storage(data_root)
+    storage: StorageBackend = create_storage_backend(
+        backend=settings.storage_backend,
+        root=data_root,
+    )
 
     code_path = settings.base_dir / settings.base / settings.space / "code"
     if str(code_path) not in sys.path:
@@ -101,6 +117,51 @@ def create_app(settings: Settings) -> FastAPI:
     @app.on_event("startup")
     async def _startup() -> None:  # pragma: no cover
         logger.info("data_root=%s root_path=%s", data_root, settings.root_path or "/")
+
+    ops_workspace_root = (
+        data_root.parent.parent if settings.data_root_override is not None else settings.base_dir
+    )
+    ops_base_arg = settings.base
+    code_path = settings.base_dir / settings.base / settings.space / "code"
+
+    def _ops_env() -> dict[str, str]:
+        env = dict(os.environ)
+        existing = env.get("PYTHONPATH", "").strip()
+        env["PYTHONPATH"] = (
+            f"{code_path}:{existing}" if existing else str(code_path)
+        )
+        return env
+
+    def _run_ops_command(operation: str, args: list[str]) -> schemas.OpsResponse:
+        command = [sys.executable, *args]
+        completed = subprocess.run(
+            command,
+            cwd=ops_workspace_root,
+            env=_ops_env(),
+            capture_output=True,
+            text=True,
+        )
+        response = schemas.OpsResponse(
+            ok=completed.returncode == 0,
+            operation=operation,
+            command=command,
+            cwd=str(ops_workspace_root),
+            exit_code=completed.returncode,
+            stdout=completed.stdout,
+            stderr=completed.stderr,
+        )
+        if completed.returncode != 0:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": "ops_failed",
+                        "message": f"{operation} failed with exit code {completed.returncode}",
+                    },
+                    "result": response.model_dump(),
+                },
+            )
+        return response
 
     def _error_response(code: str, message: str, status: int, headers: Optional[dict] = None) -> JSONResponse:
         return JSONResponse(
@@ -182,6 +243,20 @@ def create_app(settings: Settings) -> FastAPI:
     @app.get("/memory/date/{date}", dependencies=[auth_dependency], tags=["memory"])
     async def memory_by_date(date: str):
         return storage.memory_by_date(date)
+
+    @app.get(
+        "/memory/participants",
+        response_model=schemas.ParticipantActivityResponse,
+        dependencies=[auth_dependency],
+        tags=["memory"],
+    )
+    async def participant_activity(
+        start: str = Query(..., description="Inclusive ISO-8601 start timestamp"),
+        end: str = Query(..., description="Exclusive ISO-8601 end timestamp"),
+        bucket: Optional[str] = Query(None, description="Optional bucket filter"),
+        limit: int = Query(25, ge=1, le=500),
+    ):
+        return storage.participant_activity(start=start, end=end, bucket=bucket, limit=limit)
 
     @app.get("/date/{date}", dependencies=[auth_dependency], tags=["memory"], include_in_schema=False)
     async def memory_by_date_alias(date: str):
@@ -326,7 +401,198 @@ def create_app(settings: Settings) -> FastAPI:
             payload["author"] = entry.author
         if entry.url:
             payload["url"] = entry.url
+        if entry.participants:
+            payload["participants"] = [item.strip() for item in entry.participants if item and item.strip()]
+        if entry.participant_count is not None:
+            payload["participant_count"] = entry.participant_count
         path = storage.write_memory_inbox_entry(payload)
         return schemas.MemoryInboxResponse(path=path)
+
+    @app.post(
+        "/ops/memory/run",
+        response_model=schemas.OpsResponse,
+        dependencies=[auth_dependency],
+        tags=["ops"],
+    )
+    async def ops_memory_run(
+        date: Optional[str] = Query(None, description="Optional YYYY-MM-DD target date for digest/memory/seeds"),
+        force: bool = Query(False),
+        backfill_hours: Optional[int] = Query(None, ge=1),
+    ):
+        target_date = date
+        if target_date is None:
+            if space_config is not None:
+                target_date = datetime.now(ZoneInfo(space_config.timezone)).date().isoformat()
+            else:
+                target_date = datetime.now(timezone.utc).date().isoformat()
+
+        args = [
+            "-m",
+            "community_memory.pipeline",
+            "collect",
+            "--base",
+            ops_base_arg,
+            "--space",
+            settings.space,
+        ]
+        if force:
+            args.append("--force")
+        if backfill_hours is not None:
+            args.extend(["--backfill-hours", str(backfill_hours)])
+        _run_ops_command("memory.collect", args)
+
+        last_result: schemas.OpsResponse | None = None
+        for stage in ("digest", "memory", "seeds"):
+            stage_args = [
+                "-m",
+                "community_memory.pipeline",
+                stage,
+                "--base",
+                ops_base_arg,
+                "--space",
+                settings.space,
+                "--date",
+                target_date,
+            ]
+            if force:
+                stage_args.append("--force")
+            last_result = _run_ops_command(f"memory.{stage}", stage_args)
+
+        return last_result
+
+    @app.post(
+        "/ops/memory/backfill",
+        response_model=schemas.OpsBackfillResponse,
+        dependencies=[auth_dependency],
+        tags=["ops"],
+    )
+    async def ops_memory_backfill(
+        days: int = Query(30, ge=1, le=90, description="Number of days to fully recompute"),
+        force: bool = Query(True, description="Force-rebuild digest, memory, and seeds for each day"),
+    ):
+        if space_config is not None:
+            local_today = datetime.now(ZoneInfo(space_config.timezone)).date()
+        else:
+            local_today = datetime.now(timezone.utc).date()
+        start_date = local_today - timedelta(days=days - 1)
+        end_date = local_today
+
+        collect_args = [
+            "-m",
+            "community_memory.pipeline",
+            "collect",
+            "--base",
+            ops_base_arg,
+            "--space",
+            settings.space,
+            "--backfill-hours",
+            str(days * 24),
+        ]
+        if force:
+            collect_args.append("--force")
+        collect_result = _run_ops_command("memory.collect", collect_args)
+
+        results: list[schemas.OpsResponse] = []
+        current = start_date
+        while current <= end_date:
+            current_iso = current.isoformat()
+            for stage in ("digest", "memory", "seeds"):
+                stage_args = [
+                    "-m",
+                    "community_memory.pipeline",
+                    stage,
+                    "--base",
+                    ops_base_arg,
+                    "--space",
+                    settings.space,
+                    "--date",
+                    current_iso,
+                ]
+                if force:
+                    stage_args.append("--force")
+                results.append(_run_ops_command(f"memory.{stage}", stage_args))
+            current += timedelta(days=1)
+
+        return schemas.OpsBackfillResponse(
+            ok=True,
+            operation="memory.backfill",
+            start_date=start_date.isoformat(),
+            end_date=end_date.isoformat(),
+            days=days,
+            collect=collect_result,
+            results=results,
+        )
+
+    @app.post(
+        "/ops/knowledge/validate",
+        response_model=schemas.OpsResponse,
+        dependencies=[auth_dependency],
+        tags=["ops"],
+    )
+    async def ops_knowledge_validate():
+        return _run_ops_command(
+            "knowledge.validate",
+            [
+                "-m",
+                "community_knowledge",
+                "validate",
+                "--base",
+                ops_base_arg,
+                "--space",
+                settings.space,
+            ],
+        )
+
+    @app.post(
+        "/ops/knowledge/index",
+        response_model=schemas.OpsResponse,
+        dependencies=[auth_dependency],
+        tags=["ops"],
+    )
+    async def ops_knowledge_index():
+        return _run_ops_command(
+            "knowledge.index",
+            [
+                "-m",
+                "community_knowledge",
+                "index",
+                "--base",
+                ops_base_arg,
+                "--space",
+                settings.space,
+            ],
+        )
+
+    @app.post(
+        "/ops/knowledge/run",
+        response_model=schemas.OpsResponse,
+        dependencies=[auth_dependency],
+        tags=["ops"],
+    )
+    async def ops_knowledge_run():
+        _run_ops_command(
+            "knowledge.validate",
+            [
+                "-m",
+                "community_knowledge",
+                "validate",
+                "--base",
+                ops_base_arg,
+                "--space",
+                settings.space,
+            ],
+        )
+        return _run_ops_command(
+            "knowledge.index",
+            [
+                "-m",
+                "community_knowledge",
+                "index",
+                "--base",
+                ops_base_arg,
+                "--space",
+                settings.space,
+            ],
+        )
 
     return app

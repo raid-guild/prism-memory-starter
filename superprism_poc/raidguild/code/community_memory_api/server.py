@@ -41,6 +41,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base", default=os.getenv("OPENCLAW_MEMORY_API_BASE", "superprism_poc"))
     parser.add_argument("--space", default=os.getenv("OPENCLAW_MEMORY_API_SPACE", "raidguild"))
     parser.add_argument("--api-key", default=os.getenv("OPENCLAW_MEMORY_API_KEY"))
+    parser.add_argument(
+        "--storage-backend",
+        default=os.getenv("OPENCLAW_MEMORY_API_STORAGE_BACKEND", "filesystem"),
+        help="Storage backend for API reads/writes (default: filesystem)",
+    )
+    parser.add_argument(
+        "--data-root",
+        default=os.getenv("OPENCLAW_MEMORY_API_DATA_ROOT", ""),
+        help="Optional override for the Prism data root (for example a mounted volume path)",
+    )
     parser.add_argument("--root-path", default=os.getenv("OPENCLAW_MEMORY_API_ROOT_PATH", ""))
     parser.add_argument(
         "--memory-api-url",
@@ -70,6 +80,8 @@ def main() -> None:
         base=args.base,
         space=args.space,
         api_key=args.api_key,
+        storage_backend=args.storage_backend,
+        data_root_override=Path(args.data_root) if args.data_root else None,
         root_path=root_path,
         strip_prefix=strip_prefix,
     )

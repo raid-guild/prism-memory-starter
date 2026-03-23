@@ -4,6 +4,7 @@ import json
 import os
 import re
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -19,8 +20,8 @@ class StorageError(RuntimeError):
         self.message = message
 
 
-class Storage:
-    """Filesystem-backed loader for Prism Memory artifacts."""
+class FilesystemStorageBackend:
+    """Filesystem-backed storage backend for Prism Memory artifacts."""
 
     def __init__(self, root: Path) -> None:
         self.root = root.resolve()
@@ -121,6 +122,125 @@ class Storage:
             if len(entries) >= limit:
                 break
         return entries
+
+    def participant_activity(
+        self,
+        *,
+        start: str,
+        end: str,
+        bucket: Optional[str] = None,
+        limit: int = 25,
+    ) -> Dict[str, Any]:
+        start_dt = self._parse_iso_datetime(start, field="start")
+        end_dt = self._parse_iso_datetime(end, field="end")
+        if end_dt <= start_dt:
+            raise StorageError("invalid_query", "end must be later than start")
+        if bucket:
+            self._validate_bucket(bucket)
+
+        buckets_dir = self.root / "buckets"
+        if not buckets_dir.is_dir():
+            raise StorageError("not_found", "No buckets directory present")
+
+        participant_map: Dict[str, Dict[str, Any]] = {}
+        for raw_path in self._iter_raw_window_paths(start_dt, end_dt, bucket=bucket):
+            payload = self._load_json(raw_path)
+            bucket_name = str(payload.get("bucket") or raw_path.parts[-4])
+            for channel in payload.get("channels", []):
+                channel_name = str(channel.get("channel_name") or channel.get("channel_id") or "unknown")
+                channel_topic = str(channel.get("channel_topic") or "")
+                source_names = self._channel_sources(channel_name, channel_topic)
+                for message in channel.get("messages", []):
+                    created_raw = message.get("created_at")
+                    if not created_raw:
+                        continue
+                    try:
+                        created_dt = self._parse_iso_datetime(str(created_raw), field="created_at")
+                    except StorageError:
+                        continue
+                    if created_dt < start_dt or created_dt >= end_dt:
+                        continue
+                    author_name = self._message_author(message)
+                    if not author_name:
+                        continue
+                    entry = participant_map.setdefault(
+                        author_name,
+                        {
+                            "participant": author_name,
+                            "message_count": 0,
+                            "first_seen": created_dt,
+                            "last_seen": created_dt,
+                            "buckets": set(),
+                            "channels": set(),
+                            "sources": set(),
+                            "participant_mentions": 0,
+                        },
+                    )
+                    entry["message_count"] += 1
+                    if created_dt < entry["first_seen"]:
+                        entry["first_seen"] = created_dt
+                    if created_dt > entry["last_seen"]:
+                        entry["last_seen"] = created_dt
+                    entry["buckets"].add(bucket_name)
+                    entry["channels"].add(channel_name)
+                    entry["sources"].update(source_names)
+
+                    metadata = message.get("metadata") or {}
+                    for participant in self._coerce_str_list(metadata.get("participants")):
+                        if participant == author_name:
+                            continue
+                        mention_entry = participant_map.setdefault(
+                            participant,
+                            {
+                                "participant": participant,
+                                "message_count": 0,
+                                "first_seen": created_dt,
+                                "last_seen": created_dt,
+                                "buckets": set(),
+                                "channels": set(),
+                                "sources": set(),
+                                "participant_mentions": 0,
+                            },
+                        )
+                        if created_dt < mention_entry["first_seen"]:
+                            mention_entry["first_seen"] = created_dt
+                        if created_dt > mention_entry["last_seen"]:
+                            mention_entry["last_seen"] = created_dt
+                        mention_entry["buckets"].add(bucket_name)
+                        mention_entry["channels"].add(channel_name)
+                        mention_entry["sources"].update(source_names)
+                        mention_entry["participant_mentions"] += 1
+
+        results = [
+            {
+                "participant": item["participant"],
+                "message_count": item["message_count"],
+                "bucket_count": len(item["buckets"]),
+                "channel_count": len(item["channels"]),
+                "first_seen": self._to_iso(item["first_seen"]),
+                "last_seen": self._to_iso(item["last_seen"]),
+                "buckets": sorted(item["buckets"]),
+                "channels": sorted(item["channels"]),
+                "sources": sorted(item["sources"]),
+                "participant_mentions": item["participant_mentions"],
+            }
+            for item in participant_map.values()
+        ]
+        results.sort(
+            key=lambda item: (
+                -item["message_count"],
+                -item["participant_mentions"],
+                item["participant"].lower(),
+            )
+        )
+        return {
+            "start": self._to_iso(start_dt),
+            "end": self._to_iso(end_dt),
+            "bucket": bucket,
+            "limit": limit,
+            "total_participants": len(results),
+            "results": results[:limit],
+        }
 
     def knowledge_doc(self, slug: str) -> Dict[str, Any]:
         normalized, entry = self._resolve_manifest_entry(slug)
@@ -254,6 +374,86 @@ class Storage:
         path = self.root / "products" / "suggestions" / f"weekly-{week_key}.json"
         return self._load_json(path)
 
+    def _iter_raw_window_paths(
+        self, start_dt: datetime, end_dt: datetime, *, bucket: Optional[str] = None
+    ) -> List[Path]:
+        days: List[str] = []
+        cursor = start_dt.date()
+        end_date = (end_dt - timedelta(seconds=1)).date()
+        while cursor <= end_date:
+            days.append(cursor.isoformat())
+            cursor += timedelta(days=1)
+
+        raw_paths: List[Path] = []
+        bucket_names = [bucket] if bucket else sorted(
+            path.name for path in (self.root / "buckets").iterdir() if path.is_dir()
+        )
+        for bucket_name in bucket_names:
+            for day in days:
+                day_dir = self.root / "buckets" / bucket_name / "raw" / day
+                if not day_dir.is_dir():
+                    continue
+                raw_paths.extend(sorted(day_dir.glob("*.json")))
+        return raw_paths
+
+    @staticmethod
+    def _message_author(message: Dict[str, Any]) -> str:
+        author = message.get("author")
+        if isinstance(author, dict):
+            return str(author.get("display_name") or author.get("username") or "").strip()
+        return str(author or "").strip()
+
+    @staticmethod
+    def _coerce_str_list(value: Any) -> List[str]:
+        if not isinstance(value, list):
+            return []
+        items: List[str] = []
+        seen: Set[str] = set()
+        for raw in value:
+            item = str(raw).strip()
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            items.append(item)
+        return items
+
+    @staticmethod
+    def _channel_sources(channel_name: str, channel_topic: str) -> Set[str]:
+        sources: Set[str] = set()
+        lowered_name = channel_name.lower()
+        lowered_topic = channel_topic.lower()
+        if lowered_name == "latest-meetings" or "latest-meetings" in lowered_topic:
+            sources.add("meetings")
+        elif lowered_name == "memory-inbox" or lowered_name.endswith("-inbox") or "inbox source=" in lowered_topic:
+            sources.add("inbox")
+        else:
+            sources.add("discord")
+        return sources
+
+    @staticmethod
+    def _parse_iso_datetime(value: str, *, field: str) -> datetime:
+        raw = (value or "").strip()
+        if not raw:
+            raise StorageError("invalid_query", f"{field} is required")
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError as exc:
+            raise StorageError(
+                "invalid_query",
+                f"{field} must be an ISO-8601 datetime",
+            ) from exc
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    @staticmethod
+    def _to_iso(value: datetime) -> str:
+        return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace(
+            "+00:00", "Z"
+        )
+
     @staticmethod
     def _validate_date(date_str: str) -> None:
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str):
@@ -308,6 +508,16 @@ class Storage:
         missing = [field for field in required if not str(payload.get(field, "")).strip()]
         if missing:
             raise StorageError("invalid_payload", f"Missing required inbox fields: {', '.join(missing)}")
+
+        participants = payload.get("participants")
+        if participants is not None:
+            payload["participants"] = self._coerce_str_list(participants)
+        participant_count = payload.get("participant_count")
+        if participant_count is not None:
+            try:
+                payload["participant_count"] = int(participant_count)
+            except (TypeError, ValueError) as exc:
+                raise StorageError("invalid_payload", "participant_count must be an integer") from exc
 
         self.memory_inbox.mkdir(parents=True, exist_ok=True)
         source = str(payload["source"]).strip()
@@ -416,3 +626,7 @@ class Storage:
     def _load_manifest(self) -> List[Dict[str, Any]]:
         manifest_path = self.knowledge_indexes / "manifest.json"
         return self._load_json(manifest_path)
+
+
+# Backward-compatible alias for older imports.
+Storage = FilesystemStorageBackend
