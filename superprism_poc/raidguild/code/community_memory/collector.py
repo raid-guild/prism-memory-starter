@@ -345,10 +345,36 @@ class DiscordLatestCollector:
     def _bucket_by_category(self, payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
         buckets: Dict[str, Dict[str, Any]] = {}
         category_map = self.config.discord.category_to_bucket
+        category_by_channel_id: Dict[str, str] = {}
         for channel in payload.get("channels", []):
-            category_id = channel.get("category_id")
-            bucket_key = category_map.get(str(category_id))
+            channel_id = str(channel.get("channel_id") or "").strip()
+            category_id = str(channel.get("category_id") or "").strip()
+            if channel_id and category_id:
+                category_by_channel_id[channel_id] = category_id
+
+        for channel in payload.get("channels", []):
+            resolved_category_id = self._resolve_category_id(
+                channel,
+                category_by_channel_id=category_by_channel_id,
+            )
+            bucket_key = category_map.get(resolved_category_id or "")
             if not bucket_key:
+                self.activity.log(
+                    "collector.channel_skipped",
+                    collector_key=self.collector_key,
+                    run_key=payload.get("window_key"),
+                    meta={
+                        "reason": "unmapped_category",
+                        "channel_id": channel.get("channel_id"),
+                        "channel_name": channel.get("channel_name"),
+                        "category_id": channel.get("category_id"),
+                        "resolved_category_id": resolved_category_id,
+                        "thread_id": channel.get("thread_id"),
+                        "thread_name": channel.get("thread_name"),
+                        "parent_channel_id": channel.get("parent_channel_id"),
+                        "parent_channel_name": channel.get("parent_channel_name"),
+                    },
+                )
                 continue
             bucket = buckets.setdefault(
                 bucket_key,
@@ -365,6 +391,68 @@ class DiscordLatestCollector:
             bucket["messages"] += len(messages)
             bucket["channels"].append({"channel": channel, "messages": messages})
         return buckets
+
+    def _resolve_category_id(
+        self,
+        channel: Dict[str, Any],
+        *,
+        category_by_channel_id: Dict[str, str],
+    ) -> str | None:
+        def _clean(value: Any) -> str | None:
+            text = str(value or "").strip()
+            return text or None
+
+        def _candidate_parent_ids() -> List[str]:
+            parent_ids: List[str] = []
+            for key in ("parent_channel_id", "parent_id", "parentId"):
+                value = _clean(channel.get(key))
+                if value and value not in parent_ids:
+                    parent_ids.append(value)
+            thread = channel.get("thread")
+            if isinstance(thread, dict):
+                for key in ("parent_channel_id", "parent_id", "parentId"):
+                    value = _clean(thread.get(key))
+                    if value and value not in parent_ids:
+                        parent_ids.append(value)
+            for message in channel.get("messages", [])[:5]:
+                for key in ("parent_channel_id", "parent_id", "parentId"):
+                    value = _clean(message.get(key))
+                    if value and value not in parent_ids:
+                        parent_ids.append(value)
+                thread = message.get("thread")
+                if isinstance(thread, dict):
+                    for key in ("parent_channel_id", "parent_id", "parentId"):
+                        value = _clean(thread.get(key))
+                        if value and value not in parent_ids:
+                            parent_ids.append(value)
+            return parent_ids
+
+        for source in [channel, channel.get("thread") if isinstance(channel.get("thread"), dict) else None]:
+            if not isinstance(source, dict):
+                continue
+            for key in ("category_id", "parent_category_id", "categoryId", "parentCategoryId"):
+                value = _clean(source.get(key))
+                if value:
+                    return value
+
+        for message in channel.get("messages", [])[:5]:
+            for key in ("category_id", "parent_category_id", "categoryId", "parentCategoryId"):
+                value = _clean(message.get(key))
+                if value:
+                    return value
+            thread = message.get("thread")
+            if isinstance(thread, dict):
+                for key in ("category_id", "parent_category_id", "categoryId", "parentCategoryId"):
+                    value = _clean(thread.get(key))
+                    if value:
+                        return value
+
+        for parent_id in _candidate_parent_ids():
+            parent_category = category_by_channel_id.get(parent_id)
+            if parent_category:
+                return parent_category
+
+        return None
 
     @staticmethod
     def _thread_context(raw: Dict[str, Any]) -> Dict[str, Any]:
