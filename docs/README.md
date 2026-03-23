@@ -19,6 +19,8 @@ X-Prism-Api-Key: <your-key>
 | `GET /digests/date/{yyyy-mm-dd}` | required | Aggregated digests across buckets |
 | `GET /digests/bucket/{bucket}/date/{yyyy-mm-dd}` | required | Single bucket digest |
 | `GET /activity/recent?limit=100&type=...` | required | Activity log tail with optional filters |
+| `GET /skills` | required | List bundled agent skills available for download |
+| `GET /skills/{skill}/download` | required | Download a bundled skill directory as `.tar.gz` |
 | `GET /products/suggestions/latest` | required | Latest daily product suggestion JSON |
 | `GET /products/suggestions/date/{yyyy-mm-dd}` | required | Daily product suggestion JSON for a date |
 | `GET /products/suggestions/weekly/{yyyy-ww}` | required | Weekly product suggestion JSON |
@@ -31,7 +33,8 @@ X-Prism-Api-Key: <your-key>
 | `POST /memory/inbox` | required | Drop a JSON payload into `inbox/memory/incoming/` for the inbox collector |
 | `POST /ops/memory/run` | required | Run `collect -> digest -> memory -> seeds` against the active Prism data root |
 | `POST /ops/memory/backfill` | required | Run a full multi-day `collect -> digest -> memory -> seeds` recompute across a lookback window |
-| `POST /ops/knowledge/run` | required | Run `validate -> index` against the active Prism data root |
+| `POST /ops/knowledge/promote` | required | Promote staged knowledge inbox docs into canonical KB paths |
+| `POST /ops/knowledge/run` | required | Run `promote -> validate -> index` against the active Prism data root |
 
 ## Running locally
 
@@ -94,6 +97,21 @@ Knowledge ops example:
 curl -X POST \
   -H "X-Prism-Api-Key: replace-me" \
   "http://127.0.0.1:8788/ops/knowledge/run"
+```
+
+Skill listing example:
+
+```bash
+curl -H "X-Prism-Api-Key: replace-me" \
+  http://127.0.0.1:8788/skills
+```
+
+Skill download example:
+
+```bash
+curl -H "X-Prism-Api-Key: replace-me" \
+  -o prism-api-reader.tar.gz \
+  http://127.0.0.1:8788/skills/prism-api-reader/download
 ```
 
 Product suggestion example:

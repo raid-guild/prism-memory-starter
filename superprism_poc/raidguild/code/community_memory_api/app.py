@@ -7,6 +7,8 @@ import os
 import secrets
 import sys
 import time
+import io
+import tarfile
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,6 +47,7 @@ class Settings:
 
 def create_app(settings: Settings) -> FastAPI:
     data_root = settings.data_root
+    skills_root = settings.base_dir / "skills"
     if settings.data_root_override is not None and not data_root.exists():
         bundled_root = settings.base_dir / settings.base / settings.space
         if bundled_root.exists():
@@ -169,6 +172,58 @@ def create_app(settings: Settings) -> FastAPI:
             content={"error": {"code": code, "message": message}},
             headers=headers,
         )
+
+    def _skill_slug(value: str) -> str:
+        value = value.strip().strip("/")
+        if not value or ".." in value:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": "invalid_skill", "message": "Invalid skill name"}},
+            )
+        return value
+
+    def _resolve_skill_dir(slug: str) -> Path:
+        normalized = _skill_slug(slug)
+        candidates = [skills_root / normalized, skills_root / "openclaw" / normalized]
+        for candidate in candidates:
+            if candidate.is_dir() and (candidate / "SKILL.md").is_file():
+                return candidate
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": "not_found", "message": f"Skill not found: {normalized}"}},
+        )
+
+    def _list_skills() -> list[dict[str, str]]:
+        results: list[dict[str, str]] = []
+        for skill_md in sorted(skills_root.glob("*/SKILL.md")):
+            skill_dir = skill_md.parent
+            name = skill_dir.name
+            description = ""
+            for line in skill_md.read_text(encoding="utf-8").splitlines():
+                if line.startswith("description:"):
+                    description = line.split(":", 1)[1].strip()
+                    break
+            results.append({"name": name, "path": str(skill_dir.relative_to(settings.base_dir)), "description": description})
+        for skill_md in sorted((skills_root / "openclaw").glob("*/SKILL.md")):
+            skill_dir = skill_md.parent
+            name = skill_dir.name
+            description = ""
+            for line in skill_md.read_text(encoding="utf-8").splitlines():
+                if line.startswith("description:"):
+                    description = line.split(":", 1)[1].strip()
+                    break
+            results.append({"name": name, "path": str(skill_dir.relative_to(settings.base_dir)), "description": description})
+        return results
+
+    def _tar_skill_dir(skill_dir: Path) -> bytes:
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+            for path in sorted(skill_dir.rglob("*")):
+                if path.is_file():
+                    arcname = str(path.relative_to(skill_dir.parent))
+                    archive.add(path, arcname=arcname)
+        buffer.seek(0)
+        return buffer.getvalue()
 
     def require_api_key(
         prism_key: Optional[str] = Header(default=None, alias="X-Prism-Api-Key"),
@@ -295,6 +350,21 @@ def create_app(settings: Settings) -> FastAPI:
                 detail={"error": {"code": "not_found", "message": f"Config not found: {config_file}"}},
             )
         return storage._load_json(config_file)
+
+    @app.get("/skills", dependencies=[auth_dependency], tags=["system"])
+    async def skills_list():
+        return {"skills": _list_skills()}
+
+    @app.get("/skills/{skill_name}/download", dependencies=[auth_dependency], tags=["system"])
+    async def skills_download(skill_name: str):
+        skill_dir = _resolve_skill_dir(skill_name)
+        payload = _tar_skill_dir(skill_dir)
+        filename = f"{skill_dir.name}.tar.gz"
+        return Response(
+            content=payload,
+            media_type="application/gzip",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     @app.get("/products/suggestions/latest", dependencies=[auth_dependency], tags=["products"])
     async def product_suggestion_latest():
