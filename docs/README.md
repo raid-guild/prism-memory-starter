@@ -51,6 +51,33 @@ The API now resolves storage through a backend factory. `filesystem` is the defa
 When `OPENCLAW_MEMORY_API_DATA_ROOT` is set, the API reads and writes Prism data from that path instead of the bundled repo data. This is the preferred setup for Railway volumes.
 The `/ops/*` endpoints are intended for cron/scheduler triggers so one volume-owning API service can run the pipeline safely.
 
+## Railway service modes
+
+`railway.toml` now uses a shared entrypoint script:
+
+- `PRISM_SERVICE_MODE=api`
+  - runs the FastAPI service
+- `PRISM_SERVICE_MODE=trigger`
+  - performs a single authenticated `POST` to `PRISM_API_BASE + PRISM_TRIGGER_PATH` and exits
+
+Recommended Railway layout:
+
+- `prism-api`
+  - `PRISM_SERVICE_MODE=api`
+  - owns the mounted volume
+- `memory-cron`
+  - `PRISM_SERVICE_MODE=trigger`
+  - `PRISM_API_BASE=https://prism-api-production-409d.up.railway.app`
+  - `PRISM_TRIGGER_PATH=/ops/memory/run`
+- `knowledge-cron`
+  - `PRISM_SERVICE_MODE=trigger`
+  - `PRISM_API_BASE=https://prism-api-production-409d.up.railway.app`
+  - `PRISM_TRIGGER_PATH=/ops/knowledge/run`
+
+Both cron services also require:
+
+- `OPENCLAW_MEMORY_API_KEY`
+
 ## Deploy config
 
 The checked-in [`superprism_poc/raidguild/config/space.json`](../superprism_poc/raidguild/config/space.json) is a generic starter config for local bootstrapping.

@@ -2,7 +2,7 @@
 builder = "RAILPACK"
 
 [deploy]
-startCommand = "python3 -m superprism_poc.raidguild.code.community_memory_api.server --host 0.0.0.0 --port $PORT --base superprism_poc --space raidguild"
+startCommand = "python3 scripts/railway_entrypoint.py"
 healthcheckPath = "/health"
 healthcheckTimeout = 120
 restartPolicyType = "ON_FAILURE"
