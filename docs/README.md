@@ -91,6 +91,12 @@ Both cron services also require:
 
 - `PRISM_API_OPS_KEY`
 
+Important:
+
+- `POST /ops/memory/run` performs `collect -> digest -> memory -> seeds`
+- it does not run GitHub backup
+- if you still want the older GitHub mirror behavior, trigger `community_memory.pipeline backup` separately or add a dedicated backup ops route
+
 ## Deploy config
 
 The checked-in [`superprism_poc/raidguild/config/space.json`](../superprism_poc/raidguild/config/space.json) is a generic starter config for local bootstrapping.
@@ -125,6 +131,8 @@ curl -X POST \
   "http://127.0.0.1:8788/ops/memory/run?backfill_hours=24"
 ```
 
+This route runs `collect -> digest -> memory -> seeds` only.
+
 Memory backfill example:
 
 ```bash
@@ -132,6 +140,8 @@ curl -X POST \
   -H "X-Prism-Api-Key: replace-me" \
   "http://127.0.0.1:8788/ops/memory/backfill?days=30"
 ```
+
+This route runs a full multi-day `collect -> digest -> memory -> seeds` recompute. It also does not run GitHub backup.
 
 Knowledge ops example:
 

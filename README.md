@@ -106,6 +106,11 @@ GitHub backup/push:
 - `GITHUB_REPO`
 - `GITHUB_TOKEN`
 
+Note:
+
+- the local `scripts/memory_start.sh` path can run `backup` and then `git push`
+- the current Railway API trigger path uses `/ops/memory/run`, which runs `collect -> digest -> memory -> seeds` and does not perform GitHub backup
+
 ## OpenClaw-Style Harness
 
 There are two workable patterns.
