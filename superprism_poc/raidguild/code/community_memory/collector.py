@@ -1006,6 +1006,19 @@ class InboxMemoryCollector:
         body = "\n".join(lines[end_idx + 1 :])
         return meta, body
 
+    @staticmethod
+    def _coerce_participants(value: Any) -> List[str]:
+        if value is None:
+            return []
+        items = value if isinstance(value, list) else [value]
+        participants: List[str] = []
+        for item in items:
+            name = str(item).strip()
+            if not name:
+                continue
+            participants.append(name)
+        return participants
+
     def _validate_payload(self, payload: Dict[str, Any], source_path: Path) -> Dict[str, Any]:
         missing = [key for key in ("source", "ts", "type") if not str(payload.get(key, "")).strip()]
         if missing:
