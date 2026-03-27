@@ -76,19 +76,22 @@ def create_app(settings: Settings) -> FastAPI:
     knowledge_constraints = None
     allowed_kinds: list[str] = []
     config_warning: str | None = None
+    active_timezone = "UTC"
 
     def _reload_config_state() -> None:
-        nonlocal knowledge_constraints, allowed_kinds, config_warning
+        nonlocal knowledge_constraints, allowed_kinds, config_warning, active_timezone
         try:
             space_config = _load_config(config_path)
             knowledge_constraints = space_config.knowledge.constraints
             allowed_kinds = space_config.knowledge.constraints.allowed_kinds
             if space_config.knowledge.kinds:
                 allowed_kinds = sorted(set(allowed_kinds + space_config.knowledge.kinds))
+            active_timezone = space_config.timezone or "UTC"
             config_warning = None
         except FileNotFoundError:
             knowledge_constraints = None
             allowed_kinds = []
+            active_timezone = "UTC"
             config_warning = f"Knowledge config not found at {config_path}; metadata validation disabled"
             logger.warning("Knowledge config not found at %s; metadata validation disabled", config_path)
         except Exception as exc:
@@ -99,6 +102,7 @@ def create_app(settings: Settings) -> FastAPI:
                 allowed_kinds = space_config.knowledge.constraints.allowed_kinds
                 if space_config.knowledge.kinds:
                     allowed_kinds = sorted(set(allowed_kinds + space_config.knowledge.kinds))
+                active_timezone = space_config.timezone or "UTC"
                 config_warning = (
                     f"Active config at {config_path} is invalid ({exc}); "
                     f"using bundled fallback at {bundled_config_path}"
@@ -107,6 +111,7 @@ def create_app(settings: Settings) -> FastAPI:
             except Exception as fallback_exc:
                 knowledge_constraints = None
                 allowed_kinds = []
+                active_timezone = "UTC"
                 config_warning = (
                     f"Active config at {config_path} is invalid ({exc}); "
                     f"bundled fallback at {bundled_config_path} also failed ({fallback_exc}); "
@@ -646,10 +651,7 @@ def create_app(settings: Settings) -> FastAPI:
     ):
         target_date = date
         if target_date is None:
-            if space_config is not None:
-                target_date = datetime.now(ZoneInfo(space_config.timezone)).date().isoformat()
-            else:
-                target_date = datetime.now(timezone.utc).date().isoformat()
+            target_date = datetime.now(ZoneInfo(active_timezone)).date().isoformat()
 
         args = [
             "-m",
@@ -695,10 +697,7 @@ def create_app(settings: Settings) -> FastAPI:
         days: int = Query(30, ge=1, le=90, description="Number of days to fully recompute"),
         force: bool = Query(True, description="Force-rebuild digest, memory, and seeds for each day"),
     ):
-        if space_config is not None:
-            local_today = datetime.now(ZoneInfo(space_config.timezone)).date()
-        else:
-            local_today = datetime.now(timezone.utc).date()
+        local_today = datetime.now(ZoneInfo(active_timezone)).date()
         start_date = local_today - timedelta(days=days - 1)
         end_date = local_today
 
