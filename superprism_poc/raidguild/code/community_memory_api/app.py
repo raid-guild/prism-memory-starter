@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import hashlib
 import logging
@@ -73,14 +74,21 @@ def create_app(settings: Settings) -> FastAPI:
     config_path = data_root / "config" / "space.json"
     knowledge_constraints = None
     allowed_kinds: list[str] = []
-    try:
-        space_config = _load_config(config_path)
-        knowledge_constraints = space_config.knowledge.constraints
-        allowed_kinds = space_config.knowledge.constraints.allowed_kinds
-        if space_config.knowledge.kinds:
-            allowed_kinds = sorted(set(allowed_kinds + space_config.knowledge.kinds))
-    except FileNotFoundError:
-        logger.warning("Knowledge config not found at %s; metadata validation disabled", config_path)
+
+    def _reload_config_state() -> None:
+        nonlocal knowledge_constraints, allowed_kinds
+        try:
+            space_config = _load_config(config_path)
+            knowledge_constraints = space_config.knowledge.constraints
+            allowed_kinds = space_config.knowledge.constraints.allowed_kinds
+            if space_config.knowledge.kinds:
+                allowed_kinds = sorted(set(allowed_kinds + space_config.knowledge.kinds))
+        except FileNotFoundError:
+            knowledge_constraints = None
+            allowed_kinds = []
+            logger.warning("Knowledge config not found at %s; metadata validation disabled", config_path)
+
+    _reload_config_state()
 
     app = FastAPI(title="Prism Memory API", version="0.1.0", root_path=settings.root_path or "")
 
@@ -408,6 +416,46 @@ def create_app(settings: Settings) -> FastAPI:
                 detail={"error": {"code": "not_found", "message": f"Config not found: {config_file}"}},
             )
         return storage._load_json(config_file)
+
+    @app.put(
+        "/config/space",
+        response_model=schemas.SpaceConfigUpdateResponse,
+        dependencies=[ops_auth_dependency],
+        tags=["system"],
+    )
+    async def config_space_update(payload: schemas.SpaceConfigUpdateRequest):
+        config_file = data_root / "config" / "space.json"
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp_file = config_file.with_suffix(".json.tmp")
+        serialized = json.dumps(payload.config, indent=2) + "\n"
+        tmp_file.write_text(serialized, encoding="utf-8")
+        try:
+            _load_config(tmp_file)
+        except Exception as exc:
+            tmp_file.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": "invalid_config",
+                        "message": f"space.json validation failed: {exc}",
+                    }
+                },
+            )
+
+        tmp_file.replace(config_file)
+        _reload_config_state()
+
+        digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+        return schemas.SpaceConfigUpdateResponse(
+            path=str(config_file),
+            updated_at=datetime.now(timezone.utc).isoformat(),
+            sha256=digest,
+            knowledge_allowed_kinds=allowed_kinds,
+            knowledge_allowed_tags=(
+                list(knowledge_constraints.allowed_tags) if knowledge_constraints is not None else []
+            ),
+        )
 
     @app.get("/skills", dependencies=[read_auth_dependency], tags=["system"])
     async def skills_list():

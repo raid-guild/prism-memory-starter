@@ -38,3 +38,51 @@ Knowledge inbox example:
   }
 }
 ```
+
+Workflow knowledge inbox example:
+
+```json
+{
+  "filename": "weekly-publishing-workflow.md",
+  "content": "# Weekly Publishing Workflow\n\n## Purpose\n\nRun the weekly publishing cycle...\n",
+  "metadata": {
+    "title": "Weekly Publishing Workflow",
+    "slug": "weekly-publishing-workflow",
+    "kind": "guide",
+    "summary": "Step-by-step workflow for planning, drafting, review, and publishing the weekly content cycle.",
+    "tags": ["workflow"],
+    "owners": ["content-team"],
+    "status": "draft",
+    "audience": "internal",
+    "stability": "evolving",
+    "updated": "2026-03-27",
+    "entities": [],
+    "related_docs": [],
+    "triaged_at": "2026-03-27T18:00:00Z"
+  }
+}
+```
+
+Template knowledge inbox example:
+
+```json
+{
+  "filename": "newsletter-template.md",
+  "content": "# Newsletter Template\n\n## Subject\n\n## Intro\n\n## Highlights\n\n## CTA\n",
+  "metadata": {
+    "title": "Newsletter Template",
+    "slug": "newsletter-template",
+    "kind": "reference",
+    "summary": "Reusable template for internal or external newsletter drafts.",
+    "tags": ["template", "newsletter"],
+    "owners": ["content-team"],
+    "status": "draft",
+    "audience": "internal",
+    "stability": "evolving",
+    "updated": "2026-03-27",
+    "entities": [],
+    "related_docs": [],
+    "triaged_at": "2026-03-27T18:05:00Z"
+  }
+}
+```

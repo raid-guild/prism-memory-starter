@@ -91,14 +91,38 @@ Metadata must satisfy deploy-time constraints. The safe minimum fields are:
 2. validate canonical metadata
 3. rebuild indexes
 
+## Common artifact mappings
+
+Use these defaults unless the deployed corpus has a stronger convention:
+
+- reusable workflow or playbook: `kind: "guide"`
+- mandatory or governance workflow: `kind: "policy"`
+- reusable template: `kind: "reference"`
+
+Use tags to make future retrieval easier when the deployed config allows them.
+
+Preferred tags:
+
+- `workflow`
+- `template`
+- `newsletter`
+- `announcement`
+- `meeting`
+
+Do not invent unsupported tags. The deployed config remains the authority.
+
 ## Metadata rules
 
 - `slug` should be stable and filesystem-safe
 - `kind` should match the document type, not the source channel
+- reusable workflows should usually be `guide`; normative workflow rules may be `policy`
+- reusable templates should usually be `reference`
 - `summary` should be concise and factual
 - `tags` should come from the deployed config, not ad hoc guesses
+- when the deploy supports them, prefer explicit tags such as `workflow`, `template`, `newsletter`, `announcement`, and `meeting`
 - `triaged_at` should be ISO-8601 UTC
 - keep `related_docs` empty rather than inventing weak links
+- avoid ingesting reusable workflows or templates as `note`
 
 ## Safety
 

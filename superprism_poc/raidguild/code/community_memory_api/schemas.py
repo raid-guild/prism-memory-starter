@@ -92,4 +92,16 @@ class OpsBackfillResponse(BaseModel):
     results: list[OpsResponse]
 
 
+class SpaceConfigUpdateRequest(BaseModel):
+    config: Dict[str, Any] = Field(..., description="Full replacement for config/space.json")
+
+
+class SpaceConfigUpdateResponse(BaseModel):
+    path: str
+    updated_at: str
+    sha256: str
+    knowledge_allowed_kinds: list[str]
+    knowledge_allowed_tags: list[str]
+
+
 JSONMapping = Dict[str, Any]

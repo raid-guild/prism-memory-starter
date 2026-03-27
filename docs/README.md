@@ -30,6 +30,8 @@ Scoped keys:
 | `GET /digests/date/{yyyy-mm-dd}` | required | Aggregated digests across buckets |
 | `GET /digests/bucket/{bucket}/date/{yyyy-mm-dd}` | required | Single bucket digest |
 | `GET /activity/recent?limit=100&type=...` | required | Activity log tail with optional filters |
+| `GET /config/space` | required | Return the active mounted `space.json` |
+| `PUT /config/space` | required (`ops`) | Replace the active mounted `space.json` after validation |
 | `GET /skills` | required | List bundled agent skills available for download |
 | `GET /skills/{skill}/download` | required | Download a bundled skill directory as `.tar.gz` |
 | `GET /products/suggestions/latest` | required | Latest daily product suggestion JSON |
@@ -114,6 +116,79 @@ Example request:
 
 ```bash
 curl -H "X-Prism-Api-Key: replace-me" http://127.0.0.1:8788/memory/latest
+```
+
+Active config example:
+
+```bash
+curl -H "X-Prism-Api-Key: replace-me" \
+  http://127.0.0.1:8788/config/space
+```
+
+Config update example:
+
+```bash
+curl -X PUT \
+  -H "Content-Type: application/json" \
+  -H "X-Prism-Api-Key: replace-me-ops" \
+  http://127.0.0.1:8788/config/space \
+  -d '{
+    "config": {
+      "space_slug": "raidguild",
+      "timezone": "America/Denver",
+      "collectors": [],
+      "discord": {
+        "category_to_bucket": {},
+        "bucket_defaults": {"mode": "high_signal"},
+        "bucket_overrides": {},
+        "thread_promotion": {
+          "enabled": true,
+          "thread_ids": [],
+          "min_messages": 6,
+          "min_participants": 2
+        }
+      },
+      "meetings": {"bucket": "meetings"},
+      "knowledge": {
+        "enabled": true,
+        "docs_root": "superprism_poc/raidguild/knowledge/kb/docs",
+        "metadata_root": "superprism_poc/raidguild/knowledge/kb/metadata",
+        "index_root": "superprism_poc/raidguild/knowledge/kb/indexes",
+        "triage_root": "superprism_poc/raidguild/knowledge/kb/triage",
+        "activity_path": "superprism_poc/raidguild/knowledge/kb/activity/kb_activity.jsonl",
+        "state_path": "superprism_poc/raidguild/knowledge/kb/state/kb_index_state.json",
+        "triage_run_time_local": "18:15",
+        "index_run_time_local": "18:25",
+        "max_docs_per_triage_run": 20,
+        "kinds": ["architecture", "guide", "policy", "proposal", "reference", "note"],
+        "constraints": {
+          "allowed_kinds": ["architecture", "guide", "policy", "proposal", "reference", "note"],
+          "allowed_tags": ["knowledge", "workflow", "template", "newsletter", "announcement", "meeting"],
+          "allowed_status": ["draft", "active", "archived", "deprecated"],
+          "allowed_audiences": ["internal", "public"],
+          "allowed_stability": ["evergreen", "evolving"],
+          "max_tags_per_doc": 12,
+          "max_entities_per_doc": 20,
+          "max_related_docs_per_doc": 20,
+          "require_owner": true,
+          "strict_tag_enforcement": true
+        }
+      },
+      "inbox": {
+        "memory": {
+          "default_bucket": "knowledge",
+          "channel_name": "memory-inbox",
+          "max_files_per_run": 100,
+          "allowed_extensions": [".md", ".json"]
+        }
+      },
+      "run": {
+        "digest_run_time_local": "17:30",
+        "memory_run_time_local": "17:45",
+        "github_backup_run_time_local": "18:05"
+      }
+    }
+  }'
 ```
 
 Participant activity example:
