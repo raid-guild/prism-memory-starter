@@ -52,6 +52,7 @@ class Settings:
 def create_app(settings: Settings) -> FastAPI:
     data_root = settings.data_root
     skills_root = settings.base_dir / "skills"
+    bundled_config_path = settings.base_dir / settings.base / settings.space / "config" / "space.json"
     if settings.data_root_override is not None and not data_root.exists():
         bundled_root = settings.base_dir / settings.base / settings.space
         if bundled_root.exists():
@@ -74,19 +75,44 @@ def create_app(settings: Settings) -> FastAPI:
     config_path = data_root / "config" / "space.json"
     knowledge_constraints = None
     allowed_kinds: list[str] = []
+    config_warning: str | None = None
 
     def _reload_config_state() -> None:
-        nonlocal knowledge_constraints, allowed_kinds
+        nonlocal knowledge_constraints, allowed_kinds, config_warning
         try:
             space_config = _load_config(config_path)
             knowledge_constraints = space_config.knowledge.constraints
             allowed_kinds = space_config.knowledge.constraints.allowed_kinds
             if space_config.knowledge.kinds:
                 allowed_kinds = sorted(set(allowed_kinds + space_config.knowledge.kinds))
+            config_warning = None
         except FileNotFoundError:
             knowledge_constraints = None
             allowed_kinds = []
+            config_warning = f"Knowledge config not found at {config_path}; metadata validation disabled"
             logger.warning("Knowledge config not found at %s; metadata validation disabled", config_path)
+        except Exception as exc:
+            logger.exception("Failed to load active config at %s", config_path)
+            try:
+                space_config = _load_config(bundled_config_path)
+                knowledge_constraints = space_config.knowledge.constraints
+                allowed_kinds = space_config.knowledge.constraints.allowed_kinds
+                if space_config.knowledge.kinds:
+                    allowed_kinds = sorted(set(allowed_kinds + space_config.knowledge.kinds))
+                config_warning = (
+                    f"Active config at {config_path} is invalid ({exc}); "
+                    f"using bundled fallback at {bundled_config_path}"
+                )
+                logger.warning("%s", config_warning)
+            except Exception as fallback_exc:
+                knowledge_constraints = None
+                allowed_kinds = []
+                config_warning = (
+                    f"Active config at {config_path} is invalid ({exc}); "
+                    f"bundled fallback at {bundled_config_path} also failed ({fallback_exc}); "
+                    "metadata validation disabled"
+                )
+                logger.exception("Bundled fallback config failed at %s", bundled_config_path)
 
     _reload_config_state()
 
@@ -416,6 +442,19 @@ def create_app(settings: Settings) -> FastAPI:
                 detail={"error": {"code": "not_found", "message": f"Config not found: {config_file}"}},
             )
         return storage._load_json(config_file)
+
+    @app.get("/config/status", dependencies=[read_auth_dependency], tags=["system"])
+    async def config_status():
+        return {
+            "path": str(config_path),
+            "bundled_fallback_path": str(bundled_config_path),
+            "warning": config_warning,
+            "knowledge_validation_enabled": knowledge_constraints is not None,
+            "knowledge_allowed_kinds": allowed_kinds,
+            "knowledge_allowed_tags": (
+                list(knowledge_constraints.allowed_tags) if knowledge_constraints is not None else []
+            ),
+        }
 
     @app.put(
         "/config/space",
