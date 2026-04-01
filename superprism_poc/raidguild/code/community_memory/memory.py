@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -7,17 +8,29 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from .activity import ActivityLogger
+from .config_loader import SpaceConfig
 from .utils import ensure_dir, read_json, write_json
 
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 MAX_COUNTS = {
-    "open_threads": 20,
-    "key_decisions": 15,
-    "action_items": 20,
-    "facts": 20,
-    "upcoming": 10,
+    "open_threads": _env_int("PRISM_MEMORY_MAX_OPEN_THREADS", 10),
+    "key_decisions": _env_int("PRISM_MEMORY_MAX_KEY_DECISIONS", 10),
+    "action_items": _env_int("PRISM_MEMORY_MAX_ACTION_ITEMS", 10),
+    "facts": _env_int("PRISM_MEMORY_MAX_FACTS", 10),
+    "upcoming": _env_int("PRISM_MEMORY_MAX_UPCOMING", 5),
 }
-STALE_MARK_DAYS = 7
-STALE_DROP_DAYS = 14
+STALE_MARK_DAYS = _env_int("PRISM_MEMORY_STALE_MARK_DAYS", 2)
+STALE_DROP_DAYS = _env_int("PRISM_MEMORY_STALE_DROP_DAYS", 4)
 NARRATIVE_MAX_CHARS = 1200
 QUOTE_MAX_CHARS = 240
 QUOTE_MAX_PER_ITEM = 2
@@ -250,6 +263,7 @@ def _build_narrative(sections: Dict[str, List[Dict[str, Any]]]) -> str:
 class RollingMemoryBuilder:
     base_path: Path
     activity: ActivityLogger
+    config: SpaceConfig | None = None
 
     def run(self, target_date: date, force: bool = False) -> str | None:
         memory_dir = ensure_dir(self.base_path / "memory" / "rolling")
@@ -268,6 +282,19 @@ class RollingMemoryBuilder:
         digest_paths = sorted(
             self.base_path.glob(f"buckets/*/digests/{target_date.isoformat()}.json")
         )
+        if self.config is not None:
+            memory_conf = self.config.memory or {}
+            excluded = {
+                str(name).strip()
+                for name in memory_conf.get("exclude_buckets", [])
+                if str(name).strip()
+            }
+            if excluded:
+                digest_paths = [
+                    path
+                    for path in digest_paths
+                    if path.parent.parent.name not in excluded
+                ]
         if not digest_paths:
             print("[memory] no digests available; skipping memory build")
             return None

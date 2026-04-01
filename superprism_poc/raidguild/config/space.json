@@ -122,6 +122,9 @@
       ]
     }
   },
+  "memory": {
+    "exclude_buckets": []
+  },
   "run": {
     "digest_run_time_local": "17:30",
     "memory_run_time_local": "17:45",

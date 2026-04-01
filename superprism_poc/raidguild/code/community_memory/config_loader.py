@@ -115,6 +115,7 @@ class SpaceConfig:
     discord: DiscordConfig
     meetings: Dict[str, Any]
     inbox: Dict[str, Any]
+    memory: Dict[str, Any]
     knowledge: KnowledgeConfig
     run: RunSchedule
 
@@ -143,6 +144,7 @@ def load_config(path: Path) -> SpaceConfig:
     )
     meetings = raw.get("meetings", {})
     inbox = raw.get("inbox", {})
+    memory = raw.get("memory", {})
     knowledge_conf = raw.get("knowledge", {})
     constraints_conf = knowledge_conf.get("constraints", {})
     constraints = KnowledgeConstraints(
@@ -213,6 +215,7 @@ def load_config(path: Path) -> SpaceConfig:
         discord=discord,
         meetings=meetings,
         inbox=inbox,
+        memory=memory,
         knowledge=knowledge,
         run=run,
     )

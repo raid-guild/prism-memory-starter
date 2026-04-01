@@ -149,7 +149,7 @@ def build_pipeline(base_path: Path) -> dict:
     state = StateManager(base_path / "state" / "collector_state.json")
     activity = ActivityLogger(base_path / "activity" / "activity.jsonl")
     digest = DigestGenerator(base_path=base_path, config=config, activity=activity)
-    memory_builder = RollingMemoryBuilder(base_path=base_path, activity=activity)
+    memory_builder = RollingMemoryBuilder(base_path=base_path, activity=activity, config=config)
     seeds = SeedBuilder(base_path=base_path, activity=activity)
 
     pipeline = {

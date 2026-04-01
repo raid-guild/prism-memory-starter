@@ -106,6 +106,34 @@ GitHub backup/push:
 - `GITHUB_REPO`
 - `GITHUB_TOKEN`
 
+### Rolling Memory Tuning
+
+Rolling memory carries highlights and action items forward across days using configurable limits and staleness windows (implemented in `superprism_poc/raidguild/code/community_memory/memory.py`).
+
+Defaults (when no env vars are set):
+
+- max items per section:
+	- `open_threads`: 10
+	- `key_decisions`: 10
+	- `action_items`: 10
+	- `facts`: 10
+	- `upcoming`: 5
+- staleness windows:
+	- `PRISM_MEMORY_STALE_MARK_DAYS` default: 2 (items older than 2 days are marked stale)
+	- `PRISM_MEMORY_STALE_DROP_DAYS` default: 4 (items older than 4 days are dropped)
+
+You can override these with environment variables:
+
+- `PRISM_MEMORY_MAX_OPEN_THREADS`
+- `PRISM_MEMORY_MAX_KEY_DECISIONS`
+- `PRISM_MEMORY_MAX_ACTION_ITEMS`
+- `PRISM_MEMORY_MAX_FACTS`
+- `PRISM_MEMORY_MAX_UPCOMING`
+- `PRISM_MEMORY_STALE_MARK_DAYS`
+- `PRISM_MEMORY_STALE_DROP_DAYS`
+
+All values are integers; invalid or missing values fall back to the defaults above. Changes take effect on the next API / pipeline process restart.
+
 Note:
 
 - the local `scripts/memory_start.sh` path can run `backup` and then `git push`
