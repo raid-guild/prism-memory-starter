@@ -56,13 +56,23 @@ def _project_aliases(project: Dict[str, Any]) -> Set[str]:
         for item in project.get("aliases", [])
         if _clean(str(item))
     }
+    aliases.update(
+        {
+            _clean(str(item)).lower()
+            for item in project.get("tags", [])
+            if _clean(str(item))
+        }
+    )
     project_key = _clean(str(project.get("project_key", "")))
     display_name = _clean(str(project.get("display_name", "")))
+    description = _clean(str(project.get("description", "")))
     if project_key:
         aliases.add(project_key.lower())
         aliases.add(project_key.replace("-", " ").lower())
     if display_name:
         aliases.add(display_name.lower())
+    if description:
+        aliases.add(description.lower())
     return {alias for alias in aliases if alias}
 
 
@@ -124,7 +134,9 @@ class ProjectStateBuilder:
             project = dict(raw)
             project["project_key"] = project_key
             project.setdefault("display_name", _display_name(project_key))
+            project.setdefault("description", "")
             project.setdefault("aliases", [])
+            project.setdefault("tags", [])
             project.setdefault("owners", [])
             project.setdefault("source_channels", [])
             project.setdefault("derived_from", [])
@@ -157,10 +169,12 @@ class ProjectStateBuilder:
                 project = {
                     "project_key": project_key,
                     "display_name": _display_name(project_key),
+                    "description": "",
                     "status": "active",
                     "archived": False,
                     "source_channels": [],
                     "aliases": [],
+                    "tags": [],
                     "owners": [],
                     "last_direct_activity_at": created_at,
                     "last_indirect_activity_at": None,

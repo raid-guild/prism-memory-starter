@@ -396,6 +396,14 @@ def create_app(settings: Settings) -> FastAPI:
     async def memory_by_date(date: str):
         return storage.memory_by_date(date)
 
+    @app.get("/state/latest", dependencies=[read_auth_dependency], tags=["state"])
+    async def state_latest():
+        return storage.state_latest()
+
+    @app.get("/state/projects", dependencies=[read_auth_dependency], tags=["state"])
+    async def state_projects():
+        return storage.state_projects()
+
     @app.get(
         "/memory/participants",
         response_model=schemas.ParticipantActivityResponse,

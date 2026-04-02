@@ -49,6 +49,12 @@ class FilesystemStorageBackend:
         self._validate_date(date_str)
         return self._load_json(self.root / "memory" / "rolling" / f"{date_str}.json")
 
+    def state_latest(self) -> Any:
+        return self._load_json(self.root / "state" / "latest.json")
+
+    def state_projects(self) -> Any:
+        return self._load_json(self.root / "state" / "current" / "projects.json")
+
     def digests_by_date(self, date_str: str) -> Dict[str, Any]:
         self._validate_date(date_str)
         buckets_dir = self.root / "buckets"
