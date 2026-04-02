@@ -28,6 +28,7 @@ Scoped keys:
 | `GET /memory/date/{yyyy-mm-dd}` | required | Rolling memory snapshot for a date |
 | `GET /state/latest` | required | Latest state summary JSON |
 | `GET /state/projects` | required | Current canonical project registry JSON |
+| `PUT /state/projects/{project_key}` | required (`ops`) | Upsert canonical project metadata such as description, tags, aliases, owners, or archived flag |
 | `GET /memory/participants?start=...&end=...` | required | Aggregate active participants across raw bucket windows, optionally filtered by bucket |
 | `GET /digests/date/{yyyy-mm-dd}` | required | Aggregated digests across buckets |
 | `GET /digests/bucket/{bucket}/date/{yyyy-mm-dd}` | required | Single bucket digest |

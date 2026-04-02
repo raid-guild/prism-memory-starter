@@ -55,6 +55,123 @@ class FilesystemStorageBackend:
     def state_projects(self) -> Any:
         return self._load_json(self.root / "state" / "current" / "projects.json")
 
+    def upsert_state_project(self, project_key: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        normalized_key = self._safe_slug(project_key)
+        if not normalized_key:
+            raise StorageError("invalid_project_key", "project_key is required")
+
+        current_path = self.root / "state" / "current" / "projects.json"
+        latest_path = self.root / "state" / "latest.json"
+        existing = {"generated_at": None, "as_of_date": None, "projects": []}
+        if current_path.is_file():
+            loaded = self._load_json(current_path)
+            if isinstance(loaded, dict):
+                existing.update(loaded)
+
+        projects = [item for item in existing.get("projects", []) if isinstance(item, dict)]
+        project = None
+        for item in projects:
+            if self._safe_slug(str(item.get("project_key", ""))) == normalized_key:
+                project = item
+                break
+        if project is None:
+            project = {
+                "project_key": normalized_key,
+                "display_name": normalized_key.replace("-", " ").title(),
+                "description": "",
+                "status": "inactive",
+                "archived": False,
+                "source_channels": [],
+                "aliases": [],
+                "tags": [],
+                "owners": [],
+                "last_direct_activity_at": None,
+                "last_indirect_activity_at": None,
+                "derived_from": ["manual"],
+                "activity_score": 0.0,
+                "review_by": None,
+                "source": {"mode": "manual"},
+            }
+            projects.append(project)
+        else:
+            project.setdefault("display_name", normalized_key.replace("-", " ").title())
+            project.setdefault("description", "")
+            project.setdefault("aliases", [])
+            project.setdefault("tags", [])
+            project.setdefault("owners", [])
+            project.setdefault("source_channels", [])
+            project.setdefault("derived_from", [])
+            project.setdefault("source", {"mode": "manual"})
+
+        if "display_name" in payload and payload["display_name"] is not None:
+            project["display_name"] = str(payload["display_name"]).strip() or project["display_name"]
+        if "description" in payload and payload["description"] is not None:
+            project["description"] = str(payload["description"]).strip()
+        if "aliases" in payload and payload["aliases"] is not None:
+            project["aliases"] = self._coerce_str_list(payload["aliases"])
+        if "tags" in payload and payload["tags"] is not None:
+            project["tags"] = self._coerce_str_list(payload["tags"])
+        if "owners" in payload and payload["owners"] is not None:
+            project["owners"] = self._coerce_str_list(payload["owners"])
+        if "archived" in payload and payload["archived"] is not None:
+            project["archived"] = bool(payload["archived"])
+
+        generated_at = self._to_iso(datetime.now(timezone.utc))
+        as_of_date = datetime.now(timezone.utc).date().isoformat()
+        projects.sort(key=lambda item: str(item.get("project_key", "")))
+        current_payload = {
+            "generated_at": generated_at,
+            "as_of_date": as_of_date,
+            "projects": projects,
+        }
+        current_path.parent.mkdir(parents=True, exist_ok=True)
+        with current_path.open("w", encoding="utf-8") as handle:
+            json.dump(current_payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+
+        counts = {"active": 0, "watching": 0, "inactive": 0, "archived": 0}
+        for item in projects:
+            status = str(item.get("status") or "inactive")
+            if bool(item.get("archived", False)):
+                status = "archived"
+            if status not in counts:
+                status = "inactive"
+            counts[status] += 1
+        latest_payload = {
+            "generated_at": generated_at,
+            "domains": {
+                "projects": {
+                    "source_path": "state/current/projects.json",
+                    "updated_at": generated_at,
+                    "summary": (
+                        f"{counts['active']} active, {counts['watching']} watching, "
+                        f"{counts['inactive']} inactive, {counts['archived']} archived."
+                    ),
+                }
+            },
+            "recent_changes": [
+                {
+                    "domain": "projects",
+                    "change_type": "updated",
+                    "summary": f"Project '{normalized_key}' metadata updated.",
+                    "updated_at": generated_at,
+                    "source_path": "state/current/projects.json",
+                }
+            ],
+        }
+        latest_path.parent.mkdir(parents=True, exist_ok=True)
+        with latest_path.open("w", encoding="utf-8") as handle:
+            json.dump(latest_payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+
+        return {
+            "path": str(current_path.relative_to(self.root)),
+            "latest_path": str(latest_path.relative_to(self.root)),
+            "project_key": normalized_key,
+            "updated_at": generated_at,
+            "project": project,
+        }
+
     def digests_by_date(self, date_str: str) -> Dict[str, Any]:
         self._validate_date(date_str)
         buckets_dir = self.root / "buckets"

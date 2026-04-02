@@ -404,6 +404,19 @@ def create_app(settings: Settings) -> FastAPI:
     async def state_projects():
         return storage.state_projects()
 
+    @app.put(
+        "/state/projects/{project_key}",
+        response_model=schemas.StateProjectUpsertResponse,
+        dependencies=[ops_auth_dependency],
+        tags=["state"],
+    )
+    async def state_project_upsert(project_key: str, payload: schemas.StateProjectUpsertRequest):
+        try:
+            result = storage.upsert_state_project(project_key, payload.model_dump(exclude_unset=True))
+        except StorageError as exc:
+            return _error_response(exc.code, exc.message, 400 if exc.code != "not_found" else 404)
+        return schemas.StateProjectUpsertResponse(**result)
+
     @app.get(
         "/memory/participants",
         response_model=schemas.ParticipantActivityResponse,

@@ -50,6 +50,23 @@ class MemoryInboxResponse(BaseModel):
     path: str
 
 
+class StateProjectUpsertRequest(BaseModel):
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+    aliases: Optional[list[str]] = None
+    tags: Optional[list[str]] = None
+    owners: Optional[list[str]] = None
+    archived: Optional[bool] = None
+
+
+class StateProjectUpsertResponse(BaseModel):
+    path: str
+    latest_path: str
+    project_key: str
+    updated_at: str
+    project: Dict[str, Any]
+
+
 class ParticipantActivityEntry(BaseModel):
     participant: str
     message_count: int
