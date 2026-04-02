@@ -44,8 +44,8 @@ Scoped keys:
 | `GET /knowledge/indexes/entities` | required | Entity → docs lookup table |
 | `POST /knowledge/inbox` | required | Drop a markdown + metadata pair into `knowledge/kb/triage/inbox/` |
 | `POST /memory/inbox` | required | Drop a JSON payload into `inbox/memory/incoming/` for the inbox collector |
-| `POST /ops/memory/run` | required | Run `collect -> digest -> memory -> seeds` against the active Prism data root |
-| `POST /ops/memory/backfill` | required | Run a full multi-day `collect -> digest -> memory -> seeds` recompute across a lookback window |
+| `POST /ops/memory/run` | required | Run `collect -> digest -> memory -> state(projects) -> seeds` against the active Prism data root |
+| `POST /ops/memory/backfill` | required | Run a full multi-day `collect -> digest -> memory -> state(projects) -> seeds` recompute across a lookback window |
 | `POST /ops/knowledge/promote` | required | Promote staged knowledge inbox docs into canonical KB paths |
 | `POST /ops/knowledge/run` | required | Run `promote -> validate -> index` against the active Prism data root |
 
@@ -95,7 +95,7 @@ Both cron services also require:
 
 Important:
 
-- `POST /ops/memory/run` performs `collect -> digest -> memory -> seeds`
+- `POST /ops/memory/run` performs `collect -> digest -> memory -> state(projects) -> seeds`
 - it does not run GitHub backup
 - if you still want the older GitHub mirror behavior, trigger `community_memory.pipeline backup` separately or add a dedicated backup ops route
 
@@ -182,6 +182,26 @@ curl -X PUT \
           "allowed_extensions": [".md", ".json"]
         }
       },
+      "state": {
+        "projects": {
+          "enabled": true,
+          "activity_windows": {
+            "active_days": 7,
+            "watching_days": 30
+          },
+          "detection": {
+            "category_rules": [
+              {
+                "rule_id": "raids-prefix",
+                "bucket": "raids",
+                "channel_name_prefixes": ["raid-"],
+                "mode": "canonical_project_channel"
+              }
+            ],
+            "fallback_channel_name_prefixes": []
+          }
+        }
+      },
       "run": {
         "digest_run_time_local": "17:30",
         "memory_run_time_local": "17:45",
@@ -206,7 +226,7 @@ curl -X POST \
   "http://127.0.0.1:8788/ops/memory/run?backfill_hours=24"
 ```
 
-This route runs `collect -> digest -> memory -> seeds` only.
+This route runs `collect -> digest -> memory -> state(projects) -> seeds` only.
 
 Memory backfill example:
 
@@ -216,7 +236,7 @@ curl -X POST \
   "http://127.0.0.1:8788/ops/memory/backfill?days=30"
 ```
 
-This route runs a full multi-day `collect -> digest -> memory -> seeds` recompute. It also does not run GitHub backup.
+This route runs a full multi-day `collect -> digest -> memory -> state(projects) -> seeds` recompute. It also does not run GitHub backup.
 
 Knowledge ops example:
 

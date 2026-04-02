@@ -22,6 +22,9 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+# Default limits for how much content we keep in the "latest" rolling
+# memory state. These can be overridden via space.json (preferred) or
+# environment variables (legacy / fallback).
 MAX_COUNTS = {
     "open_threads": _env_int("PRISM_MEMORY_MAX_OPEN_THREADS", 10),
     "key_decisions": _env_int("PRISM_MEMORY_MAX_KEY_DECISIONS", 10),
@@ -31,6 +34,10 @@ MAX_COUNTS = {
 }
 STALE_MARK_DAYS = _env_int("PRISM_MEMORY_STALE_MARK_DAYS", 2)
 STALE_DROP_DAYS = _env_int("PRISM_MEMORY_STALE_DROP_DAYS", 4)
+
+DEFAULT_MAX_COUNTS = dict(MAX_COUNTS)
+DEFAULT_STALE_MARK_DAYS = STALE_MARK_DAYS
+DEFAULT_STALE_DROP_DAYS = STALE_DROP_DAYS
 NARRATIVE_MAX_CHARS = 1200
 QUOTE_MAX_CHARS = 240
 QUOTE_MAX_PER_ITEM = 2
@@ -62,8 +69,8 @@ def _load_digest_bundle(paths: List[Path]) -> Dict[str, Dict[str, List[str]]]:
     return bundle
 
 
-def _default_sections() -> Dict[str, List[Dict[str, Any]]]:
-    return {section: [] for section in MAX_COUNTS}
+def _default_sections(max_counts: Dict[str, int]) -> Dict[str, List[Dict[str, Any]]]:
+    return {section: [] for section in max_counts}
 
 
 def _coerce_entry(raw: Any) -> Dict[str, Any] | None:
@@ -93,13 +100,13 @@ def _coerce_entry(raw: Any) -> Dict[str, Any] | None:
     return None
 
 
-def _load_previous(path: Path) -> Dict[str, List[Dict[str, Any]]]:
+def _load_previous(path: Path, max_counts: Dict[str, int]) -> Dict[str, List[Dict[str, Any]]]:
     if not path.exists():
-        return _default_sections()
+        return _default_sections(max_counts)
     data = read_json(path, default={})
     raw_sections = data.get("sections", {})
-    sections = _default_sections()
-    for section in MAX_COUNTS:
+    sections = _default_sections(max_counts)
+    for section in max_counts:
         values = raw_sections.get(section, [])
         coerced: List[Dict[str, Any]] = []
         if isinstance(values, list):
@@ -111,7 +118,13 @@ def _load_previous(path: Path) -> Dict[str, List[Dict[str, Any]]]:
     return sections
 
 
-def _carry_forward(items: List[Dict[str, Any]], today: date) -> List[Dict[str, Any]]:
+def _carry_forward(
+    items: List[Dict[str, Any]],
+    today: date,
+    *,
+    stale_mark_days: int,
+    stale_drop_days: int,
+) -> List[Dict[str, Any]]:
     kept: List[Dict[str, Any]] = []
     for item in items:
         if not item.get("source_digest_path"):
@@ -120,10 +133,10 @@ def _carry_forward(items: List[Dict[str, Any]], today: date) -> List[Dict[str, A
         if not last_seen:
             continue
         days_old = (today - date.fromisoformat(last_seen)).days
-        if days_old > STALE_DROP_DAYS:
+        if days_old > stale_drop_days:
             continue
         copied = dict(item)
-        copied["stale"] = days_old > STALE_MARK_DAYS
+        copied["stale"] = days_old > stale_mark_days
         kept.append(copied)
     return kept
 
@@ -259,6 +272,58 @@ def _build_narrative(sections: Dict[str, List[Dict[str, Any]]]) -> str:
     return _shorten(" ".join(parts), NARRATIVE_MAX_CHARS)
 
 
+def _coerce_positive_int(value: Any, *, minimum: int = 1) -> int | None:
+    try:
+        num = int(value)
+    except (TypeError, ValueError):
+        return None
+    if num < minimum:
+        return None
+    return num
+
+
+def _resolve_memory_limits(
+    config: SpaceConfig | None,
+) -> tuple[Dict[str, int], int, int]:
+    """Resolve rolling-memory limits from config with env fallbacks.
+
+    Priority:
+    - space.json memory.rolling / memory
+    - environment variables (DEFAULT_* constants)
+    - hard-coded defaults inside this module
+    """
+
+    max_counts = dict(DEFAULT_MAX_COUNTS)
+    stale_mark_days = DEFAULT_STALE_MARK_DAYS
+    stale_drop_days = DEFAULT_STALE_DROP_DAYS
+
+    if config is not None:
+        memory_conf = config.memory or {}
+        # Allow either memory["rolling"] nested config or top-level memory keys.
+        rolling_conf = memory_conf.get("rolling") or memory_conf
+
+        raw_max_counts = rolling_conf.get("max_counts") or {}
+        if isinstance(raw_max_counts, dict):
+            for key, default_limit in DEFAULT_MAX_COUNTS.items():
+                override = _coerce_positive_int(raw_max_counts.get(key))
+                if override is not None:
+                    max_counts[key] = override
+
+        mark_override = _coerce_positive_int(rolling_conf.get("stale_mark_days"))
+        if mark_override is not None:
+            stale_mark_days = mark_override
+
+        drop_override = _coerce_positive_int(rolling_conf.get("stale_drop_days"))
+        if drop_override is not None:
+            stale_drop_days = drop_override
+
+    # Ensure drop window is not shorter than mark window.
+    if stale_drop_days < stale_mark_days:
+        stale_drop_days = stale_mark_days
+
+    return max_counts, stale_mark_days, stale_drop_days
+
+
 @dataclass
 class RollingMemoryBuilder:
     base_path: Path
@@ -266,6 +331,8 @@ class RollingMemoryBuilder:
     config: SpaceConfig | None = None
 
     def run(self, target_date: date, force: bool = False) -> str | None:
+        max_counts, stale_mark_days, stale_drop_days = _resolve_memory_limits(self.config)
+
         memory_dir = ensure_dir(self.base_path / "memory" / "rolling")
         memory_path = memory_dir / f"{target_date.isoformat()}.json"
         md_path = memory_dir / f"{target_date.isoformat()}.md"
@@ -301,11 +368,16 @@ class RollingMemoryBuilder:
 
         bundle = _load_digest_bundle(digest_paths)
         prev_path = memory_dir / f"{(target_date - timedelta(days=1)).isoformat()}.json"
-        previous_sections = _load_previous(prev_path)
+        previous_sections = _load_previous(prev_path, max_counts)
 
-        today_sections: Dict[str, List[Dict[str, Any]]] = _default_sections()
+        today_sections: Dict[str, List[Dict[str, Any]]] = _default_sections(max_counts)
         for section, items in previous_sections.items():
-            today_sections[section] = _carry_forward(items, target_date)
+            today_sections[section] = _carry_forward(
+                items,
+                target_date,
+                stale_mark_days=stale_mark_days,
+                stale_drop_days=stale_drop_days,
+            )
 
         source_digest_paths: List[str] = []
         for digest_path in digest_paths:
@@ -386,7 +458,7 @@ class RollingMemoryBuilder:
             today_sections["action_items"].extend(action_entries)
             today_sections["key_decisions"].extend(decision_entries)
 
-        for key, limit in MAX_COUNTS.items():
+        for key, limit in max_counts.items():
             deduped = _dedupe(today_sections.get(key, []))
             deduped.sort(
                 key=lambda item: (item.get("last_seen", ""), item.get("text", "")),
@@ -410,7 +482,7 @@ class RollingMemoryBuilder:
             md_lines.append(f"- {path}")
         md_lines.append("")
 
-        for section in MAX_COUNTS:
+        for section in max_counts:
             title = section.replace("_", " ").title()
             md_lines.append(f"## {title}")
             items = today_sections.get(section, [])

@@ -194,7 +194,38 @@ curl -sS -X PUT \
     "memory": {
       "exclude_buckets": [
         "agency"
-      ]
+      ],
+      "stale_mark_days": 2,
+      "stale_drop_days": 4,
+      "max_counts": {
+        "open_threads": 10,
+        "key_decisions": 10,
+        "action_items": 10,
+        "facts": 10,
+        "upcoming": 5
+      }
+    },
+    "state": {
+      "projects": {
+        "enabled": true,
+        "activity_windows": {
+          "active_days": 7,
+          "watching_days": 30
+        },
+        "detection": {
+          "category_rules": [
+            {
+              "rule_id": "raids-prefix",
+              "bucket": "raids",
+              "channel_name_prefixes": [
+                "raid-"
+              ],
+              "mode": "canonical_project_channel"
+            }
+          ],
+          "fallback_channel_name_prefixes": []
+        }
+      }
     },
     "run": {
       "digest_run_time_local": "17:30",

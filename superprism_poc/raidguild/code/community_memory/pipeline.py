@@ -20,6 +20,7 @@ from .custom_collectors import CollectorLoadError, CommandCollector, load_python
 from .digest import DigestGenerator
 from .github_backup import GitHubBackup, GitHubEnv
 from .memory import RollingMemoryBuilder
+from .project_state import ProjectStateBuilder
 from .seeds import SeedBuilder
 from .state_manager import StateManager
 from .utils import ensure_dir, load_env_file, to_iso, utc_now
@@ -150,6 +151,7 @@ def build_pipeline(base_path: Path) -> dict:
     activity = ActivityLogger(base_path / "activity" / "activity.jsonl")
     digest = DigestGenerator(base_path=base_path, config=config, activity=activity)
     memory_builder = RollingMemoryBuilder(base_path=base_path, activity=activity, config=config)
+    project_state = ProjectStateBuilder(base_path=base_path, activity=activity, config=config)
     seeds = SeedBuilder(base_path=base_path, activity=activity)
 
     pipeline = {
@@ -159,6 +161,7 @@ def build_pipeline(base_path: Path) -> dict:
         "collectors": _collector_objects(config, base_path, state, activity),
         "digest": digest,
         "memory": memory_builder,
+        "project_state": project_state,
         "seeds": seeds,
         "base_path": base_path,
     }
@@ -217,6 +220,9 @@ def run_memory(pipeline: dict, target_date: date, force: bool = False) -> None:
         _log(f"memory updated: {output}")
     else:
         _log("memory step skipped (already up to date or no digests)")
+    state_output = pipeline["project_state"].run(target_date, force=force)
+    if state_output:
+        _log(f"project state updated: {state_output}")
 
 
 def run_seeds(pipeline: dict, target_date: date, force: bool = False) -> None:
